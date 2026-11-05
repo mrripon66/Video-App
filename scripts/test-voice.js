@@ -12,10 +12,10 @@ const fixture = Object.freeze({ filename: 'jfk.wav', size: 352078,
   url: 'https://raw.githubusercontent.com/ggml-org/whisper.cpp/v1.9.5/samples/jfk.wav',
   sha256: '59dfb9a4acb36fe2a2affc14bacbee2920ff435cb13cc314a08c13f66ba7860e' });
 
-async function testVoice() {
+async function testVoice(voiceDirectory = path.join(root, 'resources', 'voice')) {
   if (process.platform !== 'win32' || process.arch !== 'x64') throw new Error('This bundled voice test requires Windows x64.');
-  const cli = path.join(root, 'resources', 'voice', 'bin', 'whisper-cli.exe');
-  const model = path.join(root, 'resources', 'voice', 'ggml-tiny.bin');
+  const cli = path.join(voiceDirectory, 'bin', 'whisper-cli.exe');
+  const model = path.join(voiceDirectory, 'ggml-tiny.bin');
   assert.ok(fs.existsSync(cli), 'Run npm run setup:voice before testing bundled voice.');
   assert.ok(await validAsset(model, ASSETS.model), 'The bundled speech model must match its pinned checksum.');
   const results = path.join(root, 'test-results', 'voice');
@@ -49,5 +49,5 @@ async function testVoice() {
   console.log(`Offline CPU voice test passed in ${elapsedMs} ms. No microphone capture or provider credits used.`);
   return report;
 }
-if (require.main === module) testVoice().catch(error => { console.error(error.message); process.exitCode = 1; });
+if (require.main === module) testVoice(process.argv[2]).catch(error => { console.error(error.message); process.exitCode = 1; });
 module.exports = { testVoice };

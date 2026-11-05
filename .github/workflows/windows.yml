@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-${{ github.ref }}
+  group: windows-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
@@ -45,6 +45,18 @@ jobs:
         run: npm run test:voice
       - name: Build per-user Windows installer
         run: npm run dist:win
+      - name: Install and verify the packaged app
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem dist/*.exe | Select-Object -First 1
+          $setup = Start-Process -FilePath $installer.FullName -ArgumentList '/S' -WindowStyle Hidden -Wait -PassThru
+          if ($setup.ExitCode -ne 0) { throw "Installer failed: $($setup.ExitCode)" }
+          $appPath = Join-Path $env:LOCALAPPDATA 'Programs\AI Video Studio\AI Video Studio.exe'
+          node scripts/packaged-smoke.js $appPath
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $voicePath = Join-Path $env:LOCALAPPDATA 'Programs\AI Video Studio\resources\voice'
+          node scripts/test-voice.js $voicePath
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Create SHA-256 checksums
         shell: pwsh
         run: |

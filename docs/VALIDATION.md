@@ -13,7 +13,7 @@ Verification date: November 5, 2026. This record distinguishes local checks from
 | Electron recovery regression | Passed | A saved remote request with zero new pending prompts can resume through the monitoring-only review. Only injected status GET responses are read; there are zero provider submissions or real network requests. Attention items count toward capacity, removal frees capacity, and unconfirmed cancellation details are visible. |
 | Real-media library regression | Passed | A pinned official Chromium video decodes, plays, seeks, and supports correct local byte ranges. Invalid identifiers, traversal and bad ranges are rejected. This test fixture is excluded from the installer. |
 | Offline CPU transcription | Passed | The bundled Whisper tiny model transcribed a hash-verified official speech sample in about one second. No microphone was recorded and no paid service was used. |
-| Windows installer build and launch | Initial local NSIS installer built; final rebuild and installed-app verification pending | A successful build alone does not establish that an installed application launches. Record the final installer and application smoke results here. |
+| Windows installer build and launch | Passed locally | NSIS installer completed with exit code 0, created desktop and Start menu shortcuts, and installed version 1.0.0 launched successfully with all five models, offline voice available, a paused queue, and zero provider requests. The installed voice engine also passed actual sample transcription. |
 
 The unit suite contains 43 passing tests. The core tests were executed on Windows with Node.js 26.13.0. Test data is isolated from the user's real studio data. Network responses and synthetic container fixtures used by unit tests are not production videos and are never added to the shipped application's library. Desktop test evidence is written to the ignored `test-results/` folder.
 
@@ -34,7 +34,7 @@ No billable video generation has been performed. Provider adapters have been che
 
 Voice uses Windows speech recognition where available, with a bundled offline Whisper CPU fallback. Actual offline inference on a public sample passed. Windows reports one recording device on the execution host, but no microphone audio was captured during verification. Microphone quality, privacy permissions, and a spoken prompt remain a physical microphone check. Dictation does not call a video provider.
 
-The locally built installer is unsigned; no publisher certificate was supplied. GitHub publication and Actions results must be recorded only after an authorized repository push and observed workflow completion.
+The locally built installer is unsigned; no publisher certificate was supplied. Source and pull request #1 are published to the authorized GitHub repository. The Windows workflow is published after workflow access was approved; its hosted build is in progress as of this record.
 
 ## Review follow-ups
 
