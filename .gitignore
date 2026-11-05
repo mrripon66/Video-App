@@ -1,0 +1,16 @@
+node_modules/
+dist/
+coverage/
+test-results/
+playwright-report/
+*.log
+.env
+.env.*
+!.env.example
+studio-data/
+*.pfx
+*.p12
+.test-data/
+.test-tmp/
+resources/voice/
+.voice-cache/
