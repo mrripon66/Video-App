@@ -13,7 +13,7 @@ async function main() {
   fs.mkdirSync(evidence, { recursive: true });
   const dataDir = fs.mkdtempSync(path.join(evidence, 'recovery-data-'));
   const requestId = 'test-only-recovery-request';
-  const remoteBase = `https://queue.fal.run/fal-ai/wan-t2v/requests/${requestId}`;
+  const eventUrl = `https://lightricks-ltx-video-distilled.hf.space/gradio_api/call/text_to_video/${requestId}`;
   const createdAt = new Date().toISOString();
   const store = new Store(dataDir);
   store.load();
@@ -21,13 +21,13 @@ async function main() {
   // The production app has no fixture provider and no simulated-video path.
   store.mutate(state => {
     state.jobs = [
-      { id: 'recovery-remote-job', prompt: 'TEST ONLY: saved provider request, cancellation pending', modelId: 'wan', status: 'queued', createdAt,
-        remote: { requestId, statusUrl: `${remoteBase}/status`, responseUrl: remoteBase, cancelUrl: `${remoteBase}/cancel` },
+      { id: 'recovery-remote-job', prompt: 'TEST ONLY: saved provider request, cancellation pending', modelId: 'ltx-free', status: 'queued', createdAt,
+        remote: { requestId, provider: 'hf-zerogpu', eventUrl },
         cancelRequested: true, cancellation: 'requested', attempts: [] },
-      { id: 'recovery-attention-job', prompt: 'TEST ONLY: uncertain submission', modelId: 'wan', status: 'needs_attention', createdAt,
-        error: 'TEST ONLY: submission outcome is uncertain; check your provider dashboard.', attempts: [] },
-      { id: 'recovery-cancel-error', prompt: 'TEST ONLY: failed cancellation warning', modelId: 'wan', status: 'needs_attention', createdAt,
-        cancellation: 'requested', cancellationError: 'TEST ONLY: cancellation could not be confirmed; the provider may still charge.', attempts: [] },
+      { id: 'recovery-attention-job', prompt: 'TEST ONLY: uncertain submission', modelId: 'ltx-free', status: 'needs_attention', createdAt,
+        error: 'TEST ONLY: submission outcome is uncertain; check your saved request.', attempts: [] },
+      { id: 'recovery-cancel-error', prompt: 'TEST ONLY: failed cancellation warning', modelId: 'ltx-free', status: 'needs_attention', createdAt,
+        cancellation: 'requested', cancellationError: 'TEST ONLY: cancellation could not be confirmed; the provider may continue using quota.', attempts: [] },
     ];
   });
 
@@ -41,23 +41,26 @@ async function main() {
     application.process().stderr.on('data', chunk => fs.appendFileSync(path.join(evidence, 'recovery-electron.log'), chunk));
     // Install the network barrier before any action that can construct a
     // provider. No request is forwarded to the real network under any method.
-    await application.evaluate((_electronModule, allowedStatusUrl) => {
+    await application.evaluate((_electronModule, allowedEventUrl) => {
       global.__recoveryNetwork = { polls: 0, submissions: 0, forbidden: 0 };
       global.fetch = async (address, options = {}) => {
         const method = String(options.method || 'GET').toUpperCase();
         if (method === 'POST') global.__recoveryNetwork.submissions++;
-        if (method === 'GET' && String(address) === allowedStatusUrl) {
+        if (method === 'GET' && String(address) === allowedEventUrl) {
           global.__recoveryNetwork.polls++;
-          return new Response(JSON.stringify({ status: 'IN_PROGRESS' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+          return new Response(new ReadableStream({ start(controller) {
+            controller.enqueue(new TextEncoder().encode('event: heartbeat\ndata: null\n\n'));
+            // Gradio sends a long-lived SSE stream while the job waits/runs.
+            // Keep this test stream open instead of inventing a completion.
+          } }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
         }
         global.__recoveryNetwork.forbidden++;
         throw new Error('All real networking is disabled in the recovery regression test.');
       };
-    }, `${remoteBase}/status`);
+    }, eventUrl);
     page = await application.firstWindow();
     page.on('pageerror', error => pageErrors.push(error.message));
-    await page.waitForFunction(async () => Boolean(window.studio && (await window.studio.snapshot()).models.length === 5));
-    await page.evaluate(() => window.studio.saveSettings({ falKey: 'recovery-dummy-test-key-never-sent' }));
+    await page.waitForFunction(async () => Boolean(window.studio && (await window.studio.snapshot()).models.length === 6));
     await page.locator('[data-view="queue"]').click();
     await page.waitForFunction(() => document.getElementById('nav-queue-count').textContent === '3');
 
@@ -73,7 +76,7 @@ async function main() {
     await page.locator('#batch-input').fill('');
 
     const pendingCancel = page.locator('#queue-list .queue-row').filter({ hasText: 'TEST ONLY: saved provider request, cancellation pending' });
-    assert.match(await pendingCancel.innerText(), /Cancellation is not confirmed/);
+    assert.match(await pendingCancel.innerText(), /cancellation.*not confirmed/i);
     const failedCancel = page.locator('#queue-list .queue-row').filter({ hasText: 'TEST ONLY: failed cancellation warning' });
     assert.match(await failedCancel.innerText(), /cancellation could not be confirmed/);
     const attention = page.locator('#queue-list .queue-row').filter({ hasText: 'TEST ONLY: uncertain submission' });
@@ -82,17 +85,20 @@ async function main() {
     await page.locator('#review-queue').click();
     await page.locator('#approval-dialog').waitFor({ state: 'visible' });
     assert.match(await page.locator('#approval-title').innerText(), /Resume progress checks/);
-    assert.match(await page.locator('#approval-description').innerText(), /No new video generation requests/);
+    assert.match(await page.locator('#approval-description').innerText(), /no new video generation requests/i);
     assert.equal(await page.locator('#approval-prompts li').count(), 0);
     assert.equal(await page.locator('#approval-prompts-wrap').isHidden(), true);
     assert.match(await page.locator('#approve-start').innerText(), /Resume monitoring/);
     await page.locator('#approve-start').click();
     await page.locator('#approval-dialog').waitFor({ state: 'hidden' });
-    await page.waitForFunction(async () => (await window.studio.snapshot()).jobs.find(job => job.id === 'recovery-remote-job')?.status === 'running');
+    await page.waitForFunction(async () => {
+      const snapshot = await window.studio.snapshot();
+      return snapshot.running && snapshot.activeJobId === 'recovery-remote-job';
+    });
     const network = await application.evaluate(() => global.__recoveryNetwork);
     assert.ok(network.polls >= 1, 'The saved handle was polled.');
-    assert.equal(network.submissions, 0, 'Monitoring never submits another paid video request.');
-    assert.equal(network.forbidden, 0, 'Only the expected status GET fixture was requested.');
+    assert.equal(network.submissions, 0, 'Monitoring never submits another video request.');
+    assert.equal(network.forbidden, 0, 'Only the expected event-stream GET fixture was requested.');
     assert.equal(await page.locator('video').count(), 0, 'A progress fixture never becomes a fabricated video.');
     await attention.getByRole('button', { name: /^(?:Remove|Stop)$/ }).click();
     await page.waitForFunction(async () => (await window.studio.snapshot()).jobs.find(job => job.id === 'recovery-attention-job')?.status === 'cancelled');
@@ -106,9 +112,9 @@ async function main() {
     assert.deepEqual(pageErrors, [], 'Recovery has no uncaught renderer errors.');
     fs.writeFileSync(path.join(evidence, 'recovery-summary.json'), JSON.stringify({ passed: true, pendingPrompts: 0,
       savedRemoteRequests: 1, attentionItems: 2, providerSubmissions: network.submissions, fixtureStatusPolls: network.polls,
-      actualNetworkRequests: 0, checked: ['paused recovery', 'monitoring-only review', 'empty approval IDs', 'saved-handle polling',
+      actualNetworkRequests: 0, checked: ['paused recovery', 'monitoring-only review', 'empty approval IDs', 'saved-handle SSE monitoring',
         'attention capacity', 'attention removal', 'unconfirmed cancellation copy', 'failed cancellation copy', 'no fabricated videos'],
-      limitations: ['Test-only status fixtures, not live provider generation', 'No provider credits used'] }, null, 2));
+      limitations: ['Test-only event-stream fixtures, not live provider generation', 'No provider quota used'] }, null, 2));
     console.log('Recovery desktop verification passed: saved-request monitoring with zero pending prompts, correct attention capacity, visible cancellation warnings, zero video submissions.');
   } finally {
     if (application) {

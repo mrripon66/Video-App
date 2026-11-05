@@ -48,7 +48,7 @@ async function main() {
   const store = new Store(dataDir);
   store.load();
   store.mutate(state => {
-    state.jobs.push({ id: jobId, modelId: 'wan',
+    state.jobs.push({ id: jobId, modelId: 'ltx-free',
       prompt: 'TEST FIXTURE — official Chromium bear.webm. Playback verification only; this was not AI-generated.',
       status: 'completed', videoPath, createdAt: new Date().toISOString(), completedAt: new Date().toISOString(), attempts: [] });
   });

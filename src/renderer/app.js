@@ -31,7 +31,7 @@
     leaf: ['M20 3C7 2 2 9 5 16s15 7 15-13z', 'M4 21L16 8'],
     clock: ['M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z', 'M12 6v6l4 2']
   };
-  let state = { jobs: [], models: [], credentials: { fal: false }, paused: true, voiceAvailable: false };
+  let state = { jobs: [], models: [], ready: false, freeOnly: true, paused: true, voiceAvailable: false };
   let view = 'create';
   let toastTimer;
   let refreshTimer;
@@ -161,7 +161,7 @@
       const card = element('article', 'model-card' + (model.available ? '' : ' unavailable'));
       const top = element('div', 'model-card-top');
       top.append(element('h3', '', model.name), element('span', 'status-badge ' + (model.available ? 'completed' : ''), model.available ? 'Available' : 'Unavailable'));
-      card.append(top, element('p', '', model.available ? model.description || 'Documented fal.ai text-to-video model.' : model.reason || 'A documented working provider endpoint has not been verified.'));
+      card.append(top, element('p', '', model.available ? model.description || 'Free shared-GPU text-to-video model. Daily limits and queues apply.' : model.reason || 'This model is unavailable in free-only mode.'));
       if (model.available && model.endpoint) card.append(element('div', 'model-endpoint', model.endpoint));
       return card;
     });
@@ -183,11 +183,13 @@
     $('queue-total').textContent = String(state.jobs.length);
     $('queue-state').textContent = state.paused ? 'New submissions paused' : 'Processing approved prompts';
     $('library-count').textContent = completed.length + (completed.length === 1 ? ' video' : ' videos');
-    $('connection-banner').hidden = Boolean(state.credentials?.fal) || view === 'settings';
-    $('credential-state').textContent = state.credentials?.fal ? 'Key saved' : 'Not connected';
-    $('credential-state').className = 'status-badge' + (state.credentials?.fal ? ' completed' : '');
-    $('fal-key').placeholder = state.credentials?.fal ? 'Key saved — paste a new key to replace it' : 'Paste your fal.ai API key';
-    $('remove-key').disabled = !state.credentials?.fal;
+    const freeReady = state.ready === true && state.freeOnly === true;
+    $('connection-banner').hidden = view === 'settings';
+    $('free-mode-summary').textContent = freeReady ? 'Free-only mode. Shared GPU quotas and queues apply.' : 'Free provider is unavailable. Your saved prompts are safe.';
+    $('provider-name').textContent = state.provider?.name || 'Hugging Face ZeroGPU';
+    $('provider-description').textContent = state.provider?.description || 'Free shared GPUs with daily quotas and queues.';
+    $('provider-state').textContent = freeReady ? 'Free mode enabled' : 'Unavailable';
+    $('provider-state').className = 'status-badge' + (freeReady ? ' completed' : '');
     $('review-queue').disabled = pending.length === 0 && !monitoringOnly;
     $('review-queue').replaceChildren(icon('play'), document.createTextNode(monitoringOnly ? 'Resume monitoring' : 'Review & start'));
     $('pause-queue').disabled = Boolean(state.paused);
@@ -212,7 +214,7 @@
     const node = element('div', 'create-empty');
     const mark = element('div', 'empty-emblem');
     mark.append(icon('sparkles'));
-    node.append(mark, element('h2', '', 'Describe it. Make it move.'), element('p', '', 'Turn an idea into a video with leading open video models. Start with a scene, a mood, or a little imagination.'));
+    node.append(mark, element('h2', '', 'Describe it. Make it move.'), element('p', '', 'Try free video generation with shared Hugging Face GPUs. Start with a scene, a mood, or a little imagination. Daily quota and waiting times apply.'));
     const row = element('div', 'suggestion-row');
     const suggestions = [
       ['A cinematic landscape', 'mountain', 'A cinematic aerial shot drifting over misty mountains at dawn, soft golden light and slow graceful camera movement.'],
@@ -253,7 +255,7 @@
       body.append(top, element('p', 'chat-result-description', jobDescription(job)));
       if (job.error) body.append(element('p', 'job-error', job.error));
       if (job.cancellationError) body.append(element('p', 'job-error', job.cancellationError));
-      if (job.cancellation === 'requested' && !job.cancellationError) body.append(element('p', 'job-error', 'Stop requested. Your provider has not confirmed cancellation and may still finish and charge for this video.'));
+      if (job.cancellation === 'requested' && !job.cancellationError) body.append(element('p', 'job-error', 'Stop requested. Cancellation is not confirmed; the submitted request may still finish and use free GPU quota.'));
       if (job.status === 'completed' && job.videoPath) {
         body.append(makeVideo(job), button('Export video', async () => {
           const result = await bridge.exportVideo({ id: job.id });
@@ -275,7 +277,7 @@
   }
   async function retryJob(job) {
     if (job.status === 'needs_attention' && !job.remote && !job.remoteVideoUrl) {
-      const confirmed = window.confirm('Your provider may have accepted and charged for this prompt before the connection was interrupted. Check the fal.ai dashboard before retrying.\n\nMoving this prompt back to the queue could lead to another charge if you approve it. Move it back to the queue?');
+      const confirmed = window.confirm('The free provider may have accepted this prompt before the connection was interrupted. Check its status before retrying.\n\nA new attempt may use more of your daily free GPU allowance. Move this prompt back to the queue?');
       if (!confirmed) return;
     }
     await bridge.retryJob({ id: job.id });
@@ -295,7 +297,7 @@
       details.append(prompt, meta);
       if (job.error) details.append(element('p', 'job-error', job.error));
       if (job.cancellationError) details.append(element('p', 'job-error', job.cancellationError));
-      if (job.cancellation === 'requested' && !job.cancellationError) details.append(element('p', 'job-error', 'Stop requested. Cancellation is not confirmed; your provider may still finish and charge for this video.'));
+      if (job.cancellation === 'requested' && !job.cancellationError) details.append(element('p', 'job-error', 'Stop requested. Cancellation is not confirmed; the submitted request may still finish and use free GPU quota.'));
       const actions = element('div', 'job-actions');
       if (['failed', 'cancelled', 'needs_attention'].includes(job.status)) actions.append(button(retryLabel(job), () => retryJob(job)));
       if (ACTIVE.has(job.status)) actions.append(button(job.status === 'pending' ? 'Remove' : 'Stop', async () => { await bridge.cancelJob({ id: job.id }); showToast(job.status === 'pending' ? 'Prompt removed from the active queue.' : 'Stop requested. Check the provider if this request was already submitted.'); }));
@@ -370,19 +372,19 @@
     const pending = state.jobs.filter(job => job.status === 'pending');
     const monitoringOnly = pending.length === 0 && state.jobs.some(job => IN_PROGRESS.has(job.status) && job.remote) && state.paused;
     if (!pending.length && !monitoringOnly) { showToast('Add a prompt to the queue first.'); return; }
-    if (!state.credentials?.fal) { setView('settings'); $('fal-key').focus(); showToast('Save your fal.ai API key before starting the queue.', true); return; }
+    if (state.ready !== true || state.freeOnly !== true) { setView('settings'); renderStatus(); showToast('The free provider is unavailable. Your saved prompts will stay paused.', true); return; }
     const unavailable = pending.find(job => !state.models.find(model => model.id === job.modelId)?.available);
     if (unavailable) throw new Error('The queue includes an unavailable model. Remove that prompt before starting.');
     approvalIds = pending.map(job => job.id);
-    $('approval-title').textContent = monitoringOnly ? 'Resume progress checks' : 'Approve this generation batch';
+    $('approval-title').textContent = monitoringOnly ? 'Resume progress checks' : 'Review this free generation batch';
     $('approval-description').textContent = monitoringOnly
       ? 'Resume checking your already submitted provider requests and download any finished videos. No new video generation requests are included.'
-      : 'You are approving ' + pending.length + (pending.length === 1 ? ' video request' : ' video requests') + ' to fal.ai. The studio will submit these prompts in order using remote GPUs.';
+      : 'You are approving ' + pending.length + (pending.length === 1 ? ' prompt' : ' prompts') + ' to be sent to the Hugging Face Space for free video generation. The studio will submit these in order, within the provider’s available quota.';
     $('approval-prompts-wrap').hidden = monitoringOnly;
     $('approval-warning-text').textContent = monitoringOnly
-      ? 'The provider may still charge for requests submitted earlier. Resuming checks does not submit those prompts again.'
-      : 'Your provider may charge for each request. Pricing depends on the model and your account. This approval covers only these prompts during this session. New prompts need a new approval.';
-    $('approve-start').replaceChildren(document.createTextNode(monitoringOnly ? 'Resume monitoring ' : 'Approve & start '), icon('arrow-right'));
+      ? 'Resuming checks does not submit these prompts again. Already submitted requests may still use your free GPU allowance. There is no paid fallback.'
+      : 'These prompts will leave this PC and use free GPU quota. Daily limits, shared queues, or Space downtime may stop this batch before it finishes. No paid service or overage will be used. New prompts need a new approval.';
+    $('approve-start').replaceChildren(document.createTextNode(monitoringOnly ? 'Resume monitoring ' : 'Approve & start free '), icon('arrow-right'));
     const counts = new Map();
     pending.forEach(job => counts.set(job.modelId, (counts.get(job.modelId) || 0) + 1));
     $('approval-models').replaceChildren(...[...counts].map(([modelId, count]) => element('span', 'approval-model-chip', modelName(modelId) + ' × ' + count)));
@@ -391,12 +393,12 @@
   }
 
   decorateIcons();
-  $('settings-form').querySelector('.settings-buttons').append(button('Open fal.ai', () => bridge.openProviderSite(), 'arrow-right'));
+  $('open-provider').addEventListener('click', () => action(() => bridge.openProviderSite(), $('open-provider')));
   document.querySelector('.voice-panel .field-help').textContent = 'Voice is transcribed locally with Windows speech or the included offline Whisper model. No provider credits or speech language download is needed.';
   document.querySelectorAll('[data-view]').forEach(node => node.addEventListener('click', () => { setView(node.dataset.view); renderStatus(); }));
   document.querySelector('.brand').addEventListener('click', event => { event.preventDefault(); setView('create'); renderStatus(); });
   $('top-settings').addEventListener('click', () => { setView('settings'); renderStatus(); });
-  $('connect-provider').addEventListener('click', () => { setView('settings'); renderStatus(); $('fal-key').focus(); });
+  $('connect-provider').addEventListener('click', () => { setView('settings'); renderStatus(); $('open-provider').focus(); });
   $('footer-queue').addEventListener('click', () => { setView('queue'); renderStatus(); });
   $('prompt-input').addEventListener('input', updatePromptLength);
   $('prompt-input').addEventListener('keydown', event => {
@@ -438,26 +440,9 @@
     const monitoringOnly = approvalIds.length === 0;
     await bridge.startQueue({ approvedJobIds: [...approvalIds] });
     $('approval-dialog').close(); approvalIds = [];
-    showToast(monitoringOnly ? 'Provider progress checks resumed.' : 'Approved batch started. You can pause new submissions at any time.');
+    showToast(monitoringOnly ? 'Provider progress checks resumed.' : 'Free batch started. Daily GPU quota may limit how many videos finish.');
   }, $('approve-start')));
   $('approval-dialog').addEventListener('close', () => { approvalIds = []; });
-  $('settings-form').addEventListener('submit', event => {
-    event.preventDefault();
-    const control = $('settings-form').querySelector('button[type="submit"]');
-    action(async () => {
-      const key = $('fal-key').value.trim();
-      if (!key) throw new Error('Paste your fal.ai API key first.');
-      await bridge.saveSettings({ falKey: key });
-      $('fal-key').value = ''; $('fal-key').type = 'password'; $('toggle-key').setAttribute('aria-label', 'Show API key');
-      showToast('Connection saved securely. Your queue remains under your control.');
-    }, control);
-  });
-  $('remove-key').addEventListener('click', () => action(async () => { await bridge.saveSettings({ clearFalKey: true }); $('fal-key').value = ''; showToast('API key removed. New submissions are paused.'); }, $('remove-key')));
-  $('toggle-key').addEventListener('click', () => {
-    const visible = $('fal-key').type === 'password';
-    $('fal-key').type = visible ? 'text' : 'password';
-    $('toggle-key').setAttribute('aria-label', visible ? 'Hide API key' : 'Show API key');
-  });
   $('voice-button').addEventListener('click', () => action(async () => {
     dictating = true; $('voice-button').classList.add('listening'); $('voice-label').textContent = 'Listening / transcribing…';
     showToast('Speak your prompt now. Voice input is processed locally; allow a moment for transcription.');

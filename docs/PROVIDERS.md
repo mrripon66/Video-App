@@ -1,37 +1,53 @@
-# Remote video providers
+# Free remote video generation
 
-Official documentation checked on **November 5, 2026**. All five requested model families have a documented text-to-video endpoint on fal, so this version uses one fal account and key. Video computation runs on fal's GPUs, not on the Windows PC.
+Verified on **November 5, 2026**. Version 1.1 uses one anonymous, quota-limited public Hugging Face Space. The Windows app requires no provider key, paid account or card for this integration. It sends no authentication headers or cookies, so a user's paid Hugging Face balance cannot be charged through the adapter. Paid video providers are disabled.
 
-| App choice | Exact endpoint | Input used | Official source |
-| --- | --- | --- | --- |
-| Wan 2.1 | `fal-ai/wan-t2v` | Prompt; provider defaults, including 720p | [Wan API](https://fal.ai/models/fal-ai/wan-t2v/api) |
-| LTX 2.3 Fast | `fal-ai/ltx-2.3/text-to-video/fast` | Prompt; 6 seconds, 1080p, 25 fps, audio disabled | [LTX API](https://fal.ai/models/fal-ai/ltx-2.3/text-to-video/fast/api) |
-| CogVideoX-5B | `fal-ai/cogvideox-5b` | Prompt; provider defaults | [CogVideoX API](https://fal.ai/models/fal-ai/cogvideox-5b/api) |
-| Hunyuan Video | `fal-ai/hunyuan-video` | Prompt; standard mode | [Hunyuan API](https://fal.ai/models/fal-ai/hunyuan-video/api) |
-| AnimateDiff | `fal-ai/fast-animatediff/text-to-video` | Prompt; provider defaults, including 16 frames | [AnimateDiff API](https://fal.ai/models/fal-ai/fast-animatediff/text-to-video/api) |
+## Available model
 
-The app explicitly enables the safety checker. LTX uses the documented 2.3 Fast endpoint; the original assembler's older LTX endpoint was labeled research-only. The assembler's Wan, CogVideoX and abbreviated Replicate AnimateDiff IDs are replaced by the verified IDs above. No Replicate token is needed for these integrations.
+**LTX Video 0.9.8 distilled** runs in the model publisher's public [Lightricks/ltx-video-distilled Space](https://huggingface.co/spaces/Lightricks/ltx-video-distilled). Read-only checks returned `RUNNING`, ZeroGPU hardware, and HTTP 200 for its public API metadata. This is the 0.9.8 distilled model identified by [the Space source](https://huggingface.co/spaces/Lightricks/ltx-video-distilled/blob/8a42e93469c66b62d794b83a4233f5fc8439e2b5/app.py), not LTX 2.3.
 
-## What has and has not been verified
+The app requests a two-second, 512-pixel-high by 704-pixel-wide text-to-video clip, with texture upscaling disabled. The Space runs the model on a remote GPU. The PC does not download video-model weights or perform GPU inference.
 
-The adapter uses real HTTP requests and parses the provider's actual response. Automated tests replace the network with labeled test fixtures; production has no demo-video fallback. API documentation and request/response handling have been checked. **No paid generation was run**, so account authorization, credit balance, live endpoint uptime, and the resulting video quality remain unverified. A documented endpoint can subsequently become unavailable; the app displays the provider error instead of inventing a result. Provider prices and licenses must be checked on the linked model page before approving a run.
+Wan, CogVideoX, Hunyuan and AnimateDiff remain visible as unavailable because this release has no verified free prompt-only API for them. Previous paid-provider catalog entries are disabled, including the former LTX paid endpoint. Older jobs are retained; they cannot silently switch to a paid provider. The original Wan publisher's Space reported `RUNTIME_ERROR` during verification. A community Wan Space was running but required an input image and therefore did not match this app's prompt-only workflow.
 
-## Queue protocol and failure handling
+## Free quota and availability
 
-The adapter submits JSON to `https://queue.fal.run/{endpoint}` and persists the returned request ID plus tracking URLs. Polling follows the submitted request through the provider queue; a completed status is followed by a separate result fetch. The completed result must contain a usable `video.url`. This follows the [official fal queue API](https://fal.ai/docs/documentation/model-apis/inference/queue).
+Hugging Face's [ZeroGPU documentation](https://huggingface.co/docs/hub/spaces-zerogpu) currently lists two minutes of daily included GPU quota for anonymous use and five minutes for a free signed-in account. This app deliberately uses anonymous access only. Anonymous usage is shared and has lower queue priority. The chosen Space requests an `xlarge` GPU, which consumes quota at twice the normal rate, and declares a 60-second maximum GPU task for the app's short clip settings. Actual quota availability and throughput vary. Do not expect 400 clips per day or unlimited generation.
 
-If a submission's acknowledgement is lost, the error is marked `submissionUncertain`. The app must reconcile it with the provider dashboard before another paid submission. It must never silently submit the same job again. Polling a known request does not create another video request.
+PRO, Team and Enterprise accounts can automatically consume prepaid credits after their included quota. The adapter accepts no token or custom authentication, so this paid extension is unavailable in the app. It never rotates identities, changes IP addresses, switches accounts, or calls an alternate endpoint to evade quotas.
 
-Cancellation distinguishes a confirmed removal (`200`, `OK`) from a stop request sent to an already running job (`202`, `CANCELLATION_REQUESTED`). Running requests can still complete. An already completed request is not reported as successfully cancelled.
+A 400-prompt queue stores work on the PC. It does not reserve 400 free GPU jobs. On quota exhaustion or a provider error, processing stops and the remaining prompts stay saved. Wait for the provider's reset or restored availability before reviewing and resuming. Spaces may sleep, queue requests, change their API, or become unavailable.
 
-## Credential and media boundaries
+## Verified API contract
 
-Only the desktop main process handles the fal key. Keyed HTTP requests are restricted to HTTPS on `queue.fal.run`, with redirects disabled. Saved request addresses are checked against their request ID and the supported endpoint family before use. Errors redact the configured key.
+Hugging Face documents the [two-step Gradio HTTP API](https://huggingface.co/docs/hub/spaces-api-endpoints). The adapter first checks the live schema at:
 
-Returned media URLs accept HTTPS on `fal.media` and its subdomains. The exact legacy host `fal-cdn.batuhan-941.workers.dev` is also accepted because it appears in the official AnimateDiff response schema. Media downloads do not receive the provider key. If fal changes its CDN, the app fails with an actionable error until the new address is reviewed. Files should be saved locally because [fal's media links can expire](https://fal.ai/docs/documentation/model-apis/inference/queue).
+```text
+GET https://lightricks-ltx-video-distilled.hf.space/gradio_api/info
+```
 
-Downloads screen the first 4 KB and the complete byte count: MP4 requires a supported file-type brand and a sized movie/media box; WebM requires an EBML `webm` DocType and a segment containing a recognized child element. Known still-image brands, HTML, magic-only stubs and declared container sizes exceeding the file are rejected. This follows the container structure described by [W3C's ISO BMFF guidance](https://www.w3.org/TR/mse-byte-stream-format-isobmff/) and the [WebM Project guidelines](https://www.webmproject.org/docs/container/). Header screening does not establish that every frame is decodable; the local video player performs decoding.
+The `/text_to_video` endpoint must retain the following ordered inputs and a Video output:
 
-## Maintaining a model integration
+```text
+prompt, negative_prompt, input_image_filepath, input_video_filepath,
+height_ui, width_ui, mode, duration_ui, ui_frames_to_use, seed_ui,
+randomize_seed, ui_guidance_scale, improve_texture_flag
+```
 
-Update `src/core/providers.js` only after checking the model's official API page. Keep endpoint identifiers and supported options explicit. If a model cannot be verified, set its catalog entry to `available: false` with a clear `reason`, which prevents submission. Do not infer endpoint IDs from model names or short version hashes. Provider tests must cover the actual submission, tracking, result and cancellation contracts without using live credits.
+The app submits this positional body, replacing only the user's prompt:
+
+```json
+{"data":["USER PROMPT","worst quality, inconsistent motion, blurry, jittery, distorted",null,null,512,704,"text-to-video",2,9,42,true,1,false]}
+```
+
+Submission uses `POST /gradio_api/call/text_to_video`. Its actual `event_id` becomes the saved request reference. Monitoring reads `GET /gradio_api/call/text_to_video/{event_id}` as server-sent events. Heartbeats do not trigger new submissions. A complete response must contain an actual VideoData result with `data[0].video.url`; the adapter does not invent a media address. This schema was checked anonymously through `/gradio_api/info` and `/gradio_api/openapi.json` without running inference.
+
+Only the exact verified Space origin is accepted. API redirects, credentials, custom endpoints and headers are rejected. Video addresses must use that same origin's `/gradio_api/file=/tmp/gradio/` endpoint. The event stream has time, message-size and total-size bounds. Changed schemas, malformed results, interrupted streams and quota errors stop safely. An unknown submission outcome is never automatically retried.
+
+There is no verified cancellation endpoint in this integration. Cancellation therefore reports that it is unconfirmed; a remote job may continue using free quota. Saved Gradio request references may expire when the Space restarts. The app preserves the local record and does not automatically submit a replacement.
+
+## Validation and maintenance
+
+Fourteen mocked provider tests pass, including fragmented CRLF event streams, missing results, malformed schemas, strict addresses, no authentication, quota stops, timeouts, and unsupported cancellation. No paid video request was made. A live free generation is recorded separately in [VALIDATION.md](VALIDATION.md) when performed; metadata access alone does not establish video quality or a successful output download.
+
+Keep `src/core/free-provider.js` restricted to verified free endpoints. Add a model only after checking its actual API, quota behavior and returned media. A documented model name is not evidence of a usable free hosted service. Preserve the app's free-only boundary when updating dependencies or provider configuration.

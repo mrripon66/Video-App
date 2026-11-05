@@ -1,13 +1,16 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, dialog, safeStorage, shell, protocol, Menu, session } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, protocol, Menu, session } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { Readable } = require('node:stream');
 const { Store } = require('../core/store');
 const { Queue } = require('../core/queue');
-const { MODELS, FalProvider } = require('../core/providers');
-const { Vault } = require('./vault');
+const { MODELS: PREVIOUS_MODELS } = require('../core/providers');
+const { FREE_MODELS, FreeProvider, FREE_SPACE_ORIGIN } = require('../core/free-provider');
+const MODELS = [...FREE_MODELS, ...PREVIOUS_MODELS.map(model => ({ ...model, available: false,
+  description: 'Not available through the configured free provider.',
+  reason: 'No verified free API is configured for this model. Paid providers are disabled.', docsUrl: null }))];
 const { downloadVideo } = require('./download');
 const { dictate } = require('./voice');
 
@@ -17,21 +20,21 @@ const singleInstance = app.requestSingleInstanceLock();
 if (!singleInstance) { app.quit(); } else { boot(); }
 
 function boot() {
-  let window, queue, store, vault, mediaDir;
+  let window, queue, store, mediaDir;
   let voiceAvailable = process.platform === 'win32';
   let voiceReason = '';
   let dictating = false;
   let quitting = false;
-  let credentialWarning = '';
-  let credentialsBusy = false;
   const rendererPath = path.join(__dirname, '..', 'renderer', 'index.html');
   const rendererUrl = pathToFileURL(rendererPath).href;
   function changed() {
     if (window && !window.isDestroyed()) window.webContents.send('studio:changed');
   }
   function snapshot() {
-    return { ...queue.snapshot(), models: MODELS, settings: store.snapshot().settings,
-      credentials: { fal: vault.hasKey() }, voiceAvailable, voiceReason, credentialWarning };
+    return { ...queue.snapshot(), models: MODELS, settings: store.snapshot().settings, ready: true, freeOnly: true,
+      provider: { name: 'Hugging Face ZeroGPU', description: 'Free shared GPU access with daily quotas and waiting queues.',
+        docsUrl: 'https://huggingface.co/docs/hub/spaces-zerogpu' },
+      credentials: { fal: false }, voiceAvailable, voiceReason };
   }
   function getJob(id) {
     if (typeof id !== 'string') throw new Error('Choose a video first.');
@@ -66,7 +69,7 @@ function boot() {
     window.on('close', event => {
       if (!quitting && queue && !queue.snapshot().paused) {
         const choice = dialog.showMessageBoxSync(window, { type: 'question', buttons: ['Keep studio open', 'Pause and close'], defaultId: 0, cancelId: 0,
-          title: 'Close AI Video Studio?', message: 'Pause this queue and close?', detail: 'An already submitted video may continue on the provider. Your queue and request IDs are saved. Reopen the studio to resume checking its progress.' });
+          title: 'Close AI Video Studio?', message: 'Pause this queue and close?', detail: 'An already submitted video may continue using your free quota. Your queue and request IDs are saved. Reopen the studio to resume checking its progress.' });
         if (choice === 0) { event.preventDefault(); return; }
       }
       queue?.pause();
@@ -82,9 +85,10 @@ function boot() {
     fs.mkdirSync(mediaDir, { recursive: true });
     store = new Store(dataDir);
     store.load();
-    vault = new Vault(dataDir, safeStorage);
-    try { await vault.load(); } catch { credentialWarning = 'Your saved API key could not be unlocked. Please save it again in Settings.'; }
-    queue = new Queue({ store, models: MODELS, providerFactory: () => new FalProvider({ apiKey: vault.getKey() }),
+    queue = new Queue({ store, models: MODELS, providerFactory: model => {
+      if (model.provider !== 'huggingface' || !FREE_MODELS.some(entry => entry.id === model.id)) throw new Error('This application permits only the configured free provider.');
+      return new FreeProvider();
+    },
       download: (url, id) => downloadVideo(url, id, mediaDir), onChange: changed, pollIntervalMs: 4000 });
     queue.recover();
     session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
@@ -113,12 +117,9 @@ function boot() {
     });
     handle('snapshot', snapshot);
     handle('getVersion', () => app.getVersion());
-    handle('openProviderSite', () => shell.openExternal('https://fal.ai'));
+    handle('openProviderSite', () => shell.openExternal('https://huggingface.co/spaces/Lightricks/ltx-video-distilled'));
     handle('addPrompts', input => { queue.addPrompts(input?.prompts, input?.modelId); return snapshot(); });
-    handle('startQueue', input => {
-      if (credentialsBusy) throw new Error('Wait for the provider settings to finish saving, then review the queue again.');
-      vault.getKey(); queue.start(input); return snapshot();
-    });
+    handle('startQueue', input => { queue.start(input); return snapshot(); });
     handle('pauseQueue', () => { queue.pause(); return snapshot(); });
     handle('cancelJob', async input => { await queue.cancel(input?.id); return snapshot(); });
     handle('retryJob', async input => {
@@ -128,16 +129,7 @@ function boot() {
       else queue.retry(job.id);
       return snapshot();
     });
-    handle('saveSettings', async input => {
-      if (!input || typeof input !== 'object') throw new Error('Settings are missing.');
-      if (credentialsBusy) throw new Error('A provider settings update is already in progress. Please wait a moment.');
-      credentialsBusy = true;
-      try {
-        if (input.clearFalKey === true) { queue.pause(); vault.clear(); }
-        else if (typeof input.falKey === 'string') { queue.pause(); await vault.save(input.falKey); credentialWarning = ''; }
-        changed(); return snapshot();
-      } finally { credentialsBusy = false; }
-    });
+    handle('saveSettings', () => { throw new Error('Free-only mode needs no API key and does not accept paid provider credentials.'); });
     handle('pickPromptsFile', async () => {
       const result = await dialog.showOpenDialog(window, { title: 'Import prompts — one per line', properties: ['openFile'], filters: [{ name: 'Prompt text', extensions: ['txt'] }] });
       if (result.canceled) return null;

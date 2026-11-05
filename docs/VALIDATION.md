@@ -1,41 +1,55 @@
 # Validation record
 
-Verification date: November 5, 2026. This record distinguishes local checks from provider functionality that requires a live account and spending approval.
+Verification date: November 5, 2026. This record identifies checks completed locally and checks still pending for the free-only version 1.1.
 
 ## Automated checks
 
-| Check | Result recorded so far | What it establishes |
-| --- | --- | --- |
-| Store and queue unit tests | 21 passed | Atomic persistence, backup recovery, 400 active-prompt capacity, exact approval IDs, paused restart, uncertain-submission handling, saved-request monitoring, download retry, cancellation races, and automatic pause on download/account/rate failures. |
-| Provider contract unit tests | 10 passed | Request and response handling against documented fal queue contracts, trusted addresses, error handling, and cancellation responses using injected network fixtures. |
-| Credential and download unit tests | 12 passed | Encrypted credential persistence contract, refusal without OS protection, credential removal, trusted downloads, redirect restrictions, output container checks, and partial-file cleanup. |
-| Electron desktop smoke test | Passed | The real Electron app accepts 400 prompts, protects credentials with Windows storage, presents an exact batch review, persists the queue and key across restart, and starts paused. The test records zero network requests. |
-| Electron recovery regression | Passed | A saved remote request with zero new pending prompts can resume through the monitoring-only review. Only injected status GET responses are read; there are zero provider submissions or real network requests. Attention items count toward capacity, removal frees capacity, and unconfirmed cancellation details are visible. |
-| Real-media library regression | Passed | A pinned official Chromium video decodes, plays, seeks, and supports correct local byte ranges. Invalid identifiers, traversal and bad ranges are rejected. This test fixture is excluded from the installer. |
-| Offline CPU transcription | Passed | The bundled Whisper tiny model transcribed a hash-verified official speech sample in about one second. No microphone was recorded and no paid service was used. |
-| Windows installer build and launch | Passed locally | NSIS installer completed with exit code 0, created desktop and Start menu shortcuts, and installed version 1.0.0 launched successfully with all five models, offline voice available, a paused queue, and zero provider requests. The installed voice engine also passed actual sample transcription. |
+`npm test` currently passes **62 tests** on Windows with Node.js 26.13.0:
 
-The unit suite contains 43 passing tests. The core tests were executed on Windows with Node.js 26.13.0. Test data is isolated from the user's real studio data. Network responses and synthetic container fixtures used by unit tests are not production videos and are never added to the shipped application's library. Desktop test evidence is written to the ignored `test-results/` folder.
+| Group | Result | Scope |
+| --- | ---: | --- |
+| Store and queue | 24 passed | Atomic persistence, backups, 400 active prompts, exact reviewed IDs, paused restarts, uncertain submission handling, saved-request monitoring, download recovery, cancellation races, single-flight operations and stopping the batch on provider/quota signals. |
+| Free LTX provider | 14 passed | Anonymous fixed-origin requests, credential/custom-endpoint rejection, live-schema preflight contract, Gradio event handles, fragmented CRLF SSE, returned VideoData, quota stops, failed streams, bounded time/size, and unsupported cancellation. Network responses are injected test fixtures. |
+| Credential vault and downloader | 14 passed | Encryption/storage contracts retained from the earlier implementation; trusted media hosts, redirects, atomic saves, container screening, valid empty MP4 `free`/`skip` boxes, and partial-file cleanup. The free-only UI does not configure provider credentials. |
+| Legacy paid-provider contract | 10 passed | Historical fal request handling. These tests do not make paid calls; the free-only desktop factory does not enable that provider. |
 
-## Safety and recovery checks
+The free provider's read-only checks found the official Lightricks Space running on ZeroGPU, with HTTP 200 for `/config`, `/gradio_api/info` and `/gradio_api/openapi.json`. Its actual ordered text-to-video inputs and VideoData output match the adapter. Metadata inspection alone does not prove a generated video's quality or successful playback.
 
-- Adding, importing, editing, or reviewing prompts does not submit generation requests.
-- A start request must contain exactly the current pending prompt IDs. New prompts require a fresh approval.
-- Every launch starts paused. A saved remote request is monitored using its request reference; the app does not automatically submit a replacement.
-- A missing submission acknowledgement is treated as uncertain because the provider may already have accepted and charged for the request.
-- Restoring a backup can restore state from before a submission. Active prompts with no remote reference are therefore held for attention and require a manual retry after checking the provider dashboard.
-- A failed download preserves the generated output URL so downloading can be retried without another generation request.
-- A cancellation request is distinguished from provider-confirmed cancellation. Pausing or closing the app cannot guarantee that a provider stops an accepted request or reverses a charge.
-- Credentials are stored separately from queue JSON. Production protection uses Electron's Windows safe storage; the unit-test encryption fixture is only a test double.
+The following desktop checks passed for the free-only 1.1 source:
 
-## Checks that require a live environment
+| Desktop check | Observed result |
+| --- | --- |
+| 400-prompt persistence and review | Passed. The queue imports 400 prompts, enforces capacity, presents the exact reviewed batch, and remains paused across restart. Test networking is blocked. |
+| Saved-request recovery | Passed. With zero new pending prompts, the monitoring-only review resumes a saved anonymous Gradio event stream. Attention items count toward capacity; removing one frees capacity. Unconfirmed cancellation details are visible. There are zero generation submissions and zero real network requests in this regression. |
+| Local video library | Passed. The library regression verifies playback, seeking and byte ranges using an official test video fixture, rather than a generated-provider output. |
 
-No billable video generation has been performed. Provider adapters have been checked against official documentation and local contract fixtures, rather than a paid end-to-end generation. Account access, endpoint availability, provider pricing, generated content quality, and successful playback of an actual provider-generated result remain to be verified with the user's chosen account and explicit credit approval.
+The earlier 1.0 Windows installer was built, installed and checked successfully. **The final updated free-only 1.1 installer and its installed application have not yet been verified.** Earlier installer results do not establish that the changed 1.1 package works.
 
-Voice uses Windows speech recognition where available, with a bundled offline Whisper CPU fallback. Actual offline inference on a public sample passed. Windows reports one recording device on the execution host, but no microphone audio was captured during verification. Microphone quality, privacy permissions, and a spoken prompt remain a physical microphone check. Dictation does not call a video provider.
+## Live free generation
 
-The locally built installer is unsigned; no publisher certificate was supplied. Source and pull request #1 are published to the authorized GitHub repository. The Windows workflow is published after workflow access was approved; its hosted build is in progress as of this record.
+One anonymous free GPU generation request was accepted and completed by the provider, which returned a video URL. The application's downloader rejected that output's container before it could become a completed local-library video. Therefore, **successful live end-to-end generation, download and playback have not been established**.
 
-## Review follow-ups
+The subsequent local fix accepts valid empty MP4 `free` and `skip` boxes, addressing the suspected container-compatibility issue while retaining other screening checks. All 62 unit tests pass with the fix. A live follow-up is still needed to prove that the returned provider output can be saved and played; a local test pass does not replace that check.
 
-The independent integration review identified saved-request monitoring with no pending prompts, attention-item capacity accounting, retry versus recovery wording, cancellation visibility, and credential-update races. Monitoring, capacity, local removal, and cancellation visibility now have a passing desktop regression. Retry wording and credential updates were reviewed in code; the final release should retain the automated suite and both desktop scripts.
+Further live follow-up and updated installer/install checks are currently blocked because automatic approval review reached its usage limit for new elevated operations. No alternate agent, shell or browser was used to bypass that restriction. Offline code review, documentation and tests remain available. No authenticated or paid fallback is permitted.
+
+## Recovery and cost boundary
+
+- Adding, importing and reviewing prompts does not run video generation.
+- Starting requires exactly the current reviewed prompt IDs; later additions need another review.
+- Every launch starts paused. Saved request IDs are preserved without automatic replacement submissions.
+- A lost acknowledgement is treated as uncertain because a request may have consumed free quota.
+- Restored backups quarantine ambiguous active work rather than silently repeating it.
+- Download failures preserve the actual output URL for download-only recovery.
+- Quota and service errors pause the remaining batch. The app does not switch identities, providers or authentication to bypass limits.
+- The public Gradio integration has no verified cancellation endpoint. The app reports cancellation as unconfirmed; the accepted request may finish and consume free quota.
+- The free adapter accepts no tokens, provider keys or custom request headers. Requests omit credentials and cannot use a paid balance through an authenticated account.
+- A 400-prompt persistent queue is not a promise of 400 free remote videos or uninterrupted shared-GPU access.
+
+## Offline voice and media
+
+Earlier offline voice validation used the bundled Whisper tiny multilingual model for real CPU transcription of a hash-verified official speech fixture, using four threads, in approximately one second. No microphone was captured and no provider credits were used. The bundled runtime includes the required app-local Microsoft DLLs. This verifies executable dependencies and local inference in the tested build. Microphone privacy settings, input quality and speech recognition for the user's voice remain physical-device checks.
+
+The media downloader screens supported MP4/WebM container structure and complete byte counts, rejects HTML, still-image brands and truncated headers, and cleans partial files. Container screening is not full decoder validation. The separate library regression uses a pinned official Chromium video fixture to check decoding, playback, seeking and byte ranges; that fixture is excluded from the installer.
+
+The Windows installer is unsigned because no publisher certificate was supplied. GitHub publication and hosted build results are tracked by the main task and should reflect the current free-only revision before release.

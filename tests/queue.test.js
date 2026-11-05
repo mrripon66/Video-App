@@ -106,7 +106,7 @@ test('restart never repeats an ambiguous submission; saved remote requests can r
   queue.recover();
   assert.equal(queue.snapshot().paused, true);
   assert.equal(queue.snapshot().jobs[0].status, 'needs_attention');
-  assert.match(queue.snapshot().jobs[0].error, /charged/);
+  assert.match(queue.snapshot().jobs[0].error, /used your quota/);
   assert.equal(queue.snapshot().jobs[1].status, 'running');
   approve(queue);
   await queue.waitForIdle();
@@ -149,7 +149,7 @@ test('poll failure keeps the request and Resume monitors without resubmitting', 
   assert.equal(queue.snapshot().jobs[0].status, 'completed');
 });
 
-test('failed downloads retry the output without generation or polling charges', async t => {
+test('failed downloads retry the output without another generation request', async t => {
   let downloads = 0;
   const { queue, calls } = fixture(t, { download: async () => { downloads++; if (downloads === 1) throw new Error('disk full'); return 'C:\\videos\\output.mp4'; } });
   const [job] = queue.addPrompts(['Test'], 'wan');
@@ -270,9 +270,9 @@ test('a stale poll failure cannot overwrite a manually retried cancelled attempt
   assert.equal(queue.snapshot().jobs[0].status, 'completed');
 });
 
-test('a failed download pauses the remaining approved batch before another paid submission', async t => {
+test('a failed download pauses the remaining approved batch before using more quota', async t => {
   const { queue, calls } = fixture(t, { download: async () => { throw new Error('disk full'); } });
-  queue.addPrompts(['Paid output cannot be saved', 'Do not submit this prompt yet'], 'wan');
+  queue.addPrompts(['Generated output cannot be saved', 'Do not submit this prompt yet'], 'wan');
   approve(queue);
   await queue.waitForIdle();
   const snapshot = queue.snapshot();
@@ -297,4 +297,66 @@ test('credential, credit and rate-limit submission errors pause the rest of the 
     assert.equal(queue.snapshot().paused, true);
     assert.deepEqual(queue.snapshot().jobs.map(job => job.status), ['failed', 'pending']);
   }
+});
+
+test('a provider stop signal on submission holds the batch without automatic retry', async t => {
+  for (const definitive of [true, false]) {
+    let submissions = 0;
+    const { queue, calls } = fixture(t, { provider: { async submit() {
+      submissions++;
+      throw Object.assign(new Error('The free allocation is exhausted. Try again later.'), {
+        pauseQueue: true, ...(definitive ? { submissionUncertain: false } : {}),
+      });
+    } } });
+    queue.addPrompts(['Free allocation limit', 'Keep this prompt waiting'], 'wan');
+    approve(queue);
+    await queue.waitForIdle();
+    await new Promise(resolve => setImmediate(resolve));
+    await queue.waitForIdle();
+    assert.equal(submissions, 1);
+    assert.equal(calls.poll, 0);
+    assert.equal(queue.snapshot().paused, true);
+    assert.deepEqual(queue.snapshot().jobs.map(job => job.status), [definitive ? 'failed' : 'needs_attention', 'pending']);
+  }
+});
+
+test('a provider stop signal during monitoring pauses on the first error and preserves the request', async t => {
+  let polls = 0;
+  const { queue, provider, calls } = fixture(t, { maxPollErrors: 10, provider: { async poll() {
+    polls++;
+    throw Object.assign(new Error('The free allocation is unavailable.'), { pauseQueue: true });
+  } } });
+  const [first] = queue.addPrompts(['Saved request hits a limit', 'Keep this prompt waiting'], 'wan');
+  approve(queue);
+  await queue.waitForIdle();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(polls, 1, 'A provider stop signal must not enter the ordinary polling retry loop.');
+  assert.equal(calls.submit, 1);
+  assert.equal(queue.snapshot().paused, true);
+  assert.deepEqual(queue.snapshot().jobs.map(job => job.status), ['needs_attention', 'pending']);
+  assert.deepEqual(queue.snapshot().jobs[0].remote, remote);
+  provider.poll = async () => { polls++; return ready; };
+  queue.resume(first.id);
+  await queue.waitForIdle();
+  assert.equal(polls, 2, 'Only a manual resume restarts monitoring.');
+  assert.equal(calls.submit, 1, 'Resuming the saved request cannot submit either prompt again.');
+  assert.deepEqual(queue.snapshot().jobs.map(job => job.status), ['completed', 'pending']);
+});
+
+test('a terminal provider failure can stop the batch without retrying or consuming another prompt', async t => {
+  let polls = 0;
+  const { queue, calls } = fixture(t, { provider: { async poll() {
+    polls++;
+    return { status: 'failed', error: 'The free allocation is exhausted.', pauseQueue: true };
+  } } });
+  queue.addPrompts(['Terminal allocation failure', 'Keep this prompt waiting'], 'wan');
+  approve(queue);
+  await queue.waitForIdle();
+  await new Promise(resolve => setImmediate(resolve));
+  await queue.waitForIdle();
+  assert.equal(calls.submit, 1);
+  assert.equal(polls, 1);
+  assert.equal(queue.snapshot().paused, true);
+  assert.deepEqual(queue.snapshot().jobs.map(job => job.status), ['failed', 'pending']);
+  assert.deepEqual(queue.snapshot().jobs[0].remote, remote);
 });

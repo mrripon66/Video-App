@@ -147,6 +147,33 @@ test('trusted relative redirects save actual MP4 bytes atomically under the job 
   assert.ok(calls.every(call => call.options.headers === undefined));
 });
 
+test('the verified anonymous free Space output downloads without credentials', async t => {
+  const directory = temporary(t), expected = mp4(), calls = [];
+  const source = 'https://lightricks-ltx-video-distilled.hf.space/gradio_api/file=/tmp/gradio/test/video.mp4';
+  const saved = await downloadVideo(source, 'free-space-output', directory, async (url, options) => {
+    calls.push({ url: String(url), options });
+    return new Response(expected, { headers: { 'Content-Type': 'video/mp4' } });
+  });
+  assert.deepEqual(fs.readFileSync(saved), expected);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, source);
+  assert.equal(calls[0].options.headers, undefined);
+});
+
+test('valid MP4 containers may include an empty free or skip box before media', () => {
+  const base = mp4();
+  for (const box of ['free', 'skip']) {
+    const emptyBox = Buffer.alloc(8);
+    emptyBox.writeUInt32BE(8);
+    emptyBox.write(box, 4, 'ascii');
+    assert.equal(isVideo(Buffer.concat([base.subarray(0, 24), emptyBox, base.subarray(24)])), true);
+  }
+  const emptyMedia = Buffer.alloc(8);
+  emptyMedia.writeUInt32BE(8);
+  emptyMedia.write('mdat', 4, 'ascii');
+  assert.equal(isVideo(Buffer.concat([base.subarray(0, 24), emptyMedia])), false);
+});
+
 test('WebM response is persisted with the matching extension', async t => {
   const directory = temporary(t), expected = webm();
   const saved = await downloadVideo('https://v3.fal.media/video', 'webm-job', directory, async () => new Response(expected));

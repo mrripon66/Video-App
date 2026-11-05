@@ -7,7 +7,7 @@ const { pipeline } = require('node:stream/promises');
 function validateMediaUrl(value) {
   const url = new URL(value);
   if (url.protocol !== 'https:' || url.username || url.password || (url.port && url.port !== '443') ||
-    !(url.hostname === 'fal.media' || url.hostname.endsWith('.fal.media') || url.hostname === 'fal-cdn.batuhan-941.workers.dev')) {
+    !(url.hostname === 'fal.media' || url.hostname.endsWith('.fal.media') || url.hostname === 'fal-cdn.batuhan-941.workers.dev' || url.hostname === 'lightricks-ltx-video-distilled.hf.space')) {
     throw new Error('The provider returned an unsupported media host. No file was downloaded.');
   }
   return url;
@@ -32,8 +32,8 @@ function isMp4(buffer, totalBytes) {
       if (large > BigInt(Number.MAX_SAFE_INTEGER)) return false;
       size = Number(large); headerSize = 16;
     } else if (size === 0) size = totalBytes - offset;
-    if (size <= headerSize || offset + size > totalBytes) return false;
-    if (type === 'moov' || type === 'mdat') return true;
+    if (size < headerSize || offset + size > totalBytes) return false;
+    if (type === 'moov' || type === 'mdat') return size > headerSize;
     offset += size;
   }
   return false;
