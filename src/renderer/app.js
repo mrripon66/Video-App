@@ -1,0 +1,487 @@
+'use strict';
+
+(() => {
+  const $ = id => document.getElementById(id);
+  const bridge = window.studio;
+  const ACTIVE = new Set(['pending', 'submitting', 'queued', 'running', 'needs_attention']);
+  const IN_PROGRESS = new Set(['submitting', 'queued', 'running']);
+  const labels = { pending: 'Awaiting approval', submitting: 'Submitting', queued: 'At provider', running: 'Generating', completed: 'Completed', failed: 'Failed', cancelled: 'Cancelled', needs_attention: 'Needs attention' };
+  const icons = {
+    sparkles: ['M12 3l2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5L12 3z', 'M20 2v4', 'M18 4h4'],
+    layers: ['M12 3L2 8l10 5 10-5-10-5z', 'M2 12l10 5 10-5', 'M2 16l10 5 10-5'],
+    film: ['M4 3h16v18H4z', 'M4 8h16', 'M4 16h16', 'M8 3v18', 'M16 3v18'],
+    settings: ['M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z', 'M9 3h6l.6 3 2.4 1.4 2.9-.8 3 5.2-2.3 2 .1 2.7 2.2 2-3 5.2-2.9-.8-2.4 1.4-.6 3H9l-.6-3L6 21l-2.9.8-3-5.2 2.3-2-.1-2.7-2.2-2 3-5.2 2.9.8L8.4 4 9 3z'],
+    cloud: ['M6 18a4 4 0 0 1-.4-8A6.5 6.5 0 0 1 18 8.5 4.8 4.8 0 0 1 18 18H6z'],
+    key: ['M14 9a5 5 0 1 0-4 5l3 3h3v3h4v-4l-6-7z'],
+    lock: ['M6 10h12v11H6z', 'M8 10V6a4 4 0 0 1 8 0v4'],
+    mic: ['M9 4a3 3 0 0 1 6 0v8a3 3 0 0 1-6 0V4z', 'M5 10v2a7 7 0 0 0 14 0v-2', 'M12 19v4', 'M8 23h8'],
+    'arrow-right': ['M4 12h15', 'M13 6l6 6-6 6'],
+    info: ['M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z', 'M12 11v6', 'M12 7v.1'],
+    pause: ['M8 5v14', 'M16 5v14'],
+    play: ['M8 4l13 8-13 8V4z'],
+    upload: ['M12 16V3', 'M6 9l6-6 6 6', 'M3 16v5h18v-5'],
+    plus: ['M12 4v16', 'M4 12h16'],
+    folder: ['M3 5h7l2 3h9v12H3V5z'],
+    eye: ['M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z', 'M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z'],
+    check: ['M5 12l4 4L20 5'],
+    shield: ['M12 2l8 3v6c0 5-8 11-8 11S4 16 4 11V5l8-3z', 'M8 11l3 3 5-6'],
+    download: ['M12 3v13', 'M6 10l6 6 6-6', 'M3 17v4h18v-4'],
+    sun: ['M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z', 'M12 2v2', 'M12 20v2', 'M2 12h2', 'M20 12h2', 'M5 5l1.5 1.5', 'M17.5 17.5L19 19', 'M5 19l1.5-1.5', 'M17.5 6.5L19 5'],
+    mountain: ['M2 20L9 7l5 8 3-5 6 10H2z', 'M7 11l2 2 2-2'],
+    leaf: ['M20 3C7 2 2 9 5 16s15 7 15-13z', 'M4 21L16 8'],
+    clock: ['M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z', 'M12 6v6l4 2']
+  };
+  let state = { jobs: [], models: [], credentials: { fal: false }, paused: true, voiceAvailable: false };
+  let view = 'create';
+  let toastTimer;
+  let refreshTimer;
+  let refreshPromise;
+  let refreshAgain = false;
+  let approvalIds = [];
+  let lastContentSignature = '';
+  let lastModelsSignature = '';
+  let lastWarning = '';
+  let dictating = false;
+  const busyControls = new Set();
+  const chatCache = new Map();
+  const libraryCache = new Map();
+
+  function element(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+  function icon(name) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', name === 'settings' ? '-1 0 26 27' : '0 0 24 24');
+    svg.setAttribute('aria-hidden', 'true');
+    for (const data of icons[name] || icons.film) {
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', data);
+      svg.append(path);
+    }
+    return svg;
+  }
+  function decorateIcons() {
+    document.querySelectorAll('[data-icon]').forEach(node => node.replaceChildren(icon(node.dataset.icon)));
+  }
+  function button(label, callback, iconName, className = 'text-button') {
+    const node = element('button', className);
+    node.type = 'button';
+    if (iconName) node.append(icon(iconName));
+    node.append(document.createTextNode(label));
+    node.addEventListener('click', () => action(callback, node));
+    return node;
+  }
+  function modelName(id) { return state.models.find(model => model.id === id)?.name || id || 'Video model'; }
+  function timeLabel(value) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' · ' + date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  }
+  function newestJobs() { return [...state.jobs].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)); }
+  function showToast(message, isError = false) {
+    clearTimeout(toastTimer);
+    $('toast').textContent = String(message);
+    $('toast').classList.toggle('error', isError);
+    $('toast').hidden = false;
+    toastTimer = setTimeout(() => { $('toast').hidden = true; }, isError ? 14000 : 5000);
+  }
+  function errorMessage(error) {
+    return String(error?.message || error || 'This action could not be completed.').replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '');
+  }
+  async function action(callback, control) {
+    if (control?.disabled) return;
+    if (control) { busyControls.add(control); control.disabled = true; }
+    try { await callback(); await refresh(); }
+    catch (error) { showToast(errorMessage(error), true); }
+    finally { if (control) { busyControls.delete(control); control.disabled = false; } renderStatus(); }
+  }
+  function setView(next) {
+    if (!['create', 'queue', 'library', 'settings'].includes(next)) return;
+    view = next;
+    document.querySelectorAll('.view').forEach(node => { node.hidden = node.id !== 'view-' + next; });
+    document.querySelectorAll('.nav-item').forEach(node => {
+      node.classList.toggle('active', node.dataset.view === next);
+      if (node.dataset.view === next) node.setAttribute('aria-current', 'page');
+      else node.removeAttribute('aria-current');
+    });
+    $('view-label').textContent = { create: 'Create', queue: 'Batch queue', library: 'Video library', settings: 'Settings' }[next];
+    document.querySelector('main').scrollTop = 0;
+  }
+  function statusBadge(job) { return element('span', 'status-badge ' + job.status, labels[job.status] || job.status); }
+  function syncChildren(parent, nodes) {
+    nodes.forEach((node, index) => {
+      if (parent.children[index] !== node) parent.insertBefore(node, parent.children[index] || null);
+    });
+    while (parent.children.length > nodes.length) parent.lastElementChild.remove();
+  }
+  function emptyState(title, copy, iconName = 'layers') {
+    const node = element('div', 'list-empty');
+    const mark = element('span');
+    mark.setAttribute('data-icon', iconName);
+    mark.append(icon(iconName));
+    node.append(mark, element('h3', '', title), element('p', '', copy));
+    return node;
+  }
+  function makeVideo(job) {
+    const video = element('video');
+    video.controls = true;
+    video.preload = 'metadata';
+    video.src = 'studio-media://video/' + encodeURIComponent(job.id);
+    video.setAttribute('aria-label', job.prompt);
+    video.addEventListener('error', () => {
+      const existing = video.parentElement?.querySelector('.video-load-error');
+      if (!existing && video.parentElement) {
+        const note = element('p', 'job-error video-load-error', 'This saved video could not be played. Use Show in folder to check the file.');
+        video.insertAdjacentElement('afterend', note);
+      }
+    });
+    return video;
+  }
+  function renderModels() {
+    const signature = JSON.stringify(state.models);
+    if (signature === lastModelsSignature) return;
+    lastModelsSignature = signature;
+    for (const select of [$('create-model'), $('batch-model')]) {
+      const previous = select.value;
+      const options = state.models.map(model => {
+        const option = element('option', '', model.name + (model.available ? '' : ' · unavailable'));
+        option.value = model.id;
+        option.disabled = !model.available;
+        if (!model.available) option.title = model.reason || 'No verified provider API is available.';
+        return option;
+      });
+      select.replaceChildren(...options);
+      select.value = state.models.some(model => model.id === previous && model.available) ? previous : state.models.find(model => model.available)?.id || '';
+      select.disabled = !state.models.some(model => model.available);
+    }
+    const cards = state.models.map(model => {
+      const card = element('article', 'model-card' + (model.available ? '' : ' unavailable'));
+      const top = element('div', 'model-card-top');
+      top.append(element('h3', '', model.name), element('span', 'status-badge ' + (model.available ? 'completed' : ''), model.available ? 'Available' : 'Unavailable'));
+      card.append(top, element('p', '', model.available ? model.description || 'Documented fal.ai text-to-video model.' : model.reason || 'A documented working provider endpoint has not been verified.'));
+      if (model.available && model.endpoint) card.append(element('div', 'model-endpoint', model.endpoint));
+      return card;
+    });
+    $('models-list').replaceChildren(...cards);
+  }
+  function renderStatus() {
+    const pending = state.jobs.filter(job => job.status === 'pending');
+    const active = state.jobs.filter(job => IN_PROGRESS.has(job.status));
+    const completed = state.jobs.filter(job => job.status === 'completed' && job.videoPath);
+    const failed = state.jobs.filter(job => ['failed', 'needs_attention'].includes(job.status));
+    const count = state.jobs.filter(job => ACTIVE.has(job.status)).length;
+    const monitoringOnly = pending.length === 0 && active.some(job => job.remote) && state.paused;
+    $('nav-queue-count').textContent = String(count);
+    $('nav-library-count').textContent = String(completed.length);
+    $('stat-pending').textContent = String(pending.length);
+    $('stat-active').textContent = String(active.length);
+    $('stat-completed').textContent = String(completed.length);
+    $('stat-failed').textContent = String(failed.length);
+    $('queue-total').textContent = String(state.jobs.length);
+    $('queue-state').textContent = state.paused ? 'New submissions paused' : 'Processing approved prompts';
+    $('library-count').textContent = completed.length + (completed.length === 1 ? ' video' : ' videos');
+    $('connection-banner').hidden = Boolean(state.credentials?.fal) || view === 'settings';
+    $('credential-state').textContent = state.credentials?.fal ? 'Key saved' : 'Not connected';
+    $('credential-state').className = 'status-badge' + (state.credentials?.fal ? ' completed' : '');
+    $('fal-key').placeholder = state.credentials?.fal ? 'Key saved — paste a new key to replace it' : 'Paste your fal.ai API key';
+    $('remove-key').disabled = !state.credentials?.fal;
+    $('review-queue').disabled = pending.length === 0 && !monitoringOnly;
+    $('review-queue').replaceChildren(icon('play'), document.createTextNode(monitoringOnly ? 'Resume monitoring' : 'Review & start'));
+    $('pause-queue').disabled = Boolean(state.paused);
+    const selected = state.models.find(model => model.id === $('create-model').value);
+    $('add-prompt').disabled = !selected?.available || count >= 400;
+    const batchSelected = state.models.find(model => model.id === $('batch-model').value);
+    const lines = batchPrompts();
+    $('add-batch').disabled = !batchSelected?.available || lines.length === 0 || lines.length + count > 400;
+    $('batch-count').textContent = lines.length + (lines.length === 1 ? ' prompt' : ' prompts') + ' · ' + Math.max(0, 400 - count) + ' spaces available';
+    $('batch-count').classList.toggle('over-limit', lines.length + count > 400);
+    $('voice-button').disabled = dictating || state.voiceAvailable === false;
+    $('voice-button').title = state.voiceAvailable === false ? state.voiceReason || 'Local voice input is unavailable. Type your prompt instead.' : 'Record a short voice prompt and transcribe it locally';
+    $('voice-description').textContent = state.voiceAvailable === false
+      ? state.voiceReason || 'Local voice input is unavailable. You can type or import prompts.'
+      : 'Speak a short prompt after clicking Voice prompt. The offline engine records up to 10 seconds, then transcribes it on this PC. Edit the text before adding it to the queue.';
+    $('footer-state').textContent = state.paused
+      ? 'Queue paused · ' + pending.length + ' awaiting approval' + (active.length ? ' · ' + active.length + ' submitted' : '')
+      : 'Queue running · ' + active.length + ' in progress · ' + pending.length + ' waiting';
+    for (const control of busyControls) control.disabled = true;
+  }
+  function renderEmptyChat() {
+    const node = element('div', 'create-empty');
+    const mark = element('div', 'empty-emblem');
+    mark.append(icon('sparkles'));
+    node.append(mark, element('h2', '', 'Describe it. Make it move.'), element('p', '', 'Turn an idea into a video with leading open video models. Start with a scene, a mood, or a little imagination.'));
+    const row = element('div', 'suggestion-row');
+    const suggestions = [
+      ['A cinematic landscape', 'mountain', 'A cinematic aerial shot drifting over misty mountains at dawn, soft golden light and slow graceful camera movement.'],
+      ['A quiet moment', 'leaf', 'A close-up of raindrops rolling down a greenhouse window, lush leaves beyond the glass, gentle natural light.'],
+      ['Golden-hour magic', 'sun', 'A warm golden-hour tracking shot through a quiet coastal village, pastel houses, gentle sea breeze, subtle film grain.']
+    ];
+    for (const [label, symbol, prompt] of suggestions) row.append(button(label, () => { $('prompt-input').value = prompt; updatePromptLength(); $('prompt-input').focus(); }, symbol, 'suggestion'));
+    node.append(row);
+    return node;
+  }
+  function jobDescription(job) {
+    const descriptions = {
+      pending: 'Added to your queue. Review and approve the batch when you’re ready.',
+      submitting: 'Sending your approved prompt to the video provider.',
+      queued: 'Your provider has accepted this request and is waiting for a GPU.',
+      running: 'Your provider is generating this video. Progress is saved in your queue.',
+      completed: 'Your video is ready and saved on this PC.',
+      failed: 'This request could not finish. Check the details before retrying.',
+      cancelled: job.cancellation === 'confirmed' ? 'Your provider confirmed that this request was cancelled.' : 'This prompt was removed from the active queue before a new submission.',
+      needs_attention: 'This request needs a review. Its provider details are saved so it can be recovered where possible.'
+    };
+    return descriptions[job.status] || 'See the queue for the latest request status.';
+  }
+  function renderChat(jobs) {
+    const feed = $('chat-feed');
+    const nearBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 70;
+    if (!jobs.length) { feed.replaceChildren(renderEmptyChat()); return; }
+    const entries = jobs.slice(0, 20).reverse().map(job => {
+      const signature = JSON.stringify(job);
+      const cached = chatCache.get(job.id);
+      if (cached?.signature === signature) return cached.node;
+      const entry = element('article', 'chat-entry');
+      entry.append(element('div', 'chat-prompt', job.prompt));
+      const result = element('div', 'chat-result');
+      const avatar = element('span', 'chat-avatar'); avatar.append(icon('sparkles'));
+      const body = element('div', 'chat-result-body');
+      const top = element('div', 'chat-result-top'); top.append(element('strong', '', modelName(job.modelId)), statusBadge(job));
+      body.append(top, element('p', 'chat-result-description', jobDescription(job)));
+      if (job.error) body.append(element('p', 'job-error', job.error));
+      if (job.cancellationError) body.append(element('p', 'job-error', job.cancellationError));
+      if (job.cancellation === 'requested' && !job.cancellationError) body.append(element('p', 'job-error', 'Stop requested. Your provider has not confirmed cancellation and may still finish and charge for this video.'));
+      if (job.status === 'completed' && job.videoPath) {
+        body.append(makeVideo(job), button('Export video', async () => {
+          const result = await bridge.exportVideo({ id: job.id });
+          if (result?.saved) showToast('Video exported.');
+        }, 'download'));
+      } else if (job.status === 'pending') body.append(button('Review queue', () => setView('queue'), 'arrow-right'));
+      result.append(avatar, body); entry.append(result);
+      chatCache.set(job.id, { signature, node: entry }); return entry;
+    });
+    for (const id of chatCache.keys()) if (!jobs.slice(0, 20).some(job => job.id === id)) chatCache.delete(id);
+    syncChildren(feed, entries);
+    if (nearBottom) feed.scrollTop = feed.scrollHeight;
+  }
+  function retryLabel(job) { return job.status === 'needs_attention' && (job.remote || job.remoteVideoUrl) ? 'Recover' : 'Retry'; }
+  function retryCopy(job) {
+    if (job.status === 'needs_attention' && job.remoteVideoUrl) return 'Recovering the saved video download. No new video request will be submitted.';
+    if (job.status === 'needs_attention' && job.remote) return 'Recovering this provider request. No new video request will be submitted.';
+    return 'Moved back to the queue. Review and approve it before generating.';
+  }
+  async function retryJob(job) {
+    if (job.status === 'needs_attention' && !job.remote && !job.remoteVideoUrl) {
+      const confirmed = window.confirm('Your provider may have accepted and charged for this prompt before the connection was interrupted. Check the fal.ai dashboard before retrying.\n\nMoving this prompt back to the queue could lead to another charge if you approve it. Move it back to the queue?');
+      if (!confirmed) return;
+    }
+    await bridge.retryJob({ id: job.id });
+    showToast(retryCopy(job));
+  }
+  function renderQueue(jobs) {
+    if (!jobs.length) {
+      $('queue-list').replaceChildren(emptyState('A clear queue. A fresh start.', 'Add a prompt from Create, or import a text file above. Nothing runs until you approve it.'));
+      return;
+    }
+    const rows = jobs.map(job => {
+      const row = element('article', 'queue-row');
+      const mark = element('span', 'job-type-icon'); mark.append(icon(job.status === 'completed' ? 'film' : 'clock'));
+      const details = element('div', 'job-details');
+      const prompt = element('p', 'job-prompt', job.prompt); prompt.title = job.prompt;
+      const meta = element('div', 'job-meta'); meta.append(element('span', '', modelName(job.modelId)), element('span', '', timeLabel(job.createdAt)));
+      details.append(prompt, meta);
+      if (job.error) details.append(element('p', 'job-error', job.error));
+      if (job.cancellationError) details.append(element('p', 'job-error', job.cancellationError));
+      if (job.cancellation === 'requested' && !job.cancellationError) details.append(element('p', 'job-error', 'Stop requested. Cancellation is not confirmed; your provider may still finish and charge for this video.'));
+      const actions = element('div', 'job-actions');
+      if (['failed', 'cancelled', 'needs_attention'].includes(job.status)) actions.append(button(retryLabel(job), () => retryJob(job)));
+      if (ACTIVE.has(job.status)) actions.append(button(job.status === 'pending' ? 'Remove' : 'Stop', async () => { await bridge.cancelJob({ id: job.id }); showToast(job.status === 'pending' ? 'Prompt removed from the active queue.' : 'Stop requested. Check the provider if this request was already submitted.'); }));
+      if (job.status === 'completed' && job.videoPath) actions.append(button('Export', async () => {
+        const result = await bridge.exportVideo({ id: job.id }); if (result?.saved) showToast('Video exported.');
+      }, 'download'));
+      row.append(mark, details, statusBadge(job), actions);
+      return row;
+    });
+    $('queue-list').replaceChildren(...rows);
+  }
+  function renderLibrary(jobs) {
+    const complete = jobs.filter(job => job.status === 'completed' && job.videoPath);
+    if (!complete.length) {
+      $('library-grid').replaceChildren(emptyState('Your story collection starts here.', 'Completed videos will appear here after they have been downloaded from your provider. Add your first prompt in Create.', 'film'));
+      return;
+    }
+    const cards = complete.map(job => {
+      const signature = JSON.stringify(job);
+      const cached = libraryCache.get(job.id);
+      if (cached?.signature === signature) return cached.node;
+      const card = element('article', 'video-card');
+      const body = element('div', 'video-card-body');
+      const prompt = element('p', 'job-prompt', job.prompt); prompt.title = job.prompt;
+      const meta = element('div', 'job-meta'); meta.append(element('span', '', modelName(job.modelId)), element('span', '', timeLabel(job.createdAt)));
+      const footer = element('div', 'video-card-footer');
+      footer.append(button('Show in folder', () => bridge.revealVideo({ id: job.id }), 'folder'), button('Export video', async () => {
+        const result = await bridge.exportVideo({ id: job.id }); if (result?.saved) showToast('Video exported.');
+      }, 'download'));
+      body.append(prompt, meta, footer); card.append(makeVideo(job), body);
+      libraryCache.set(job.id, { signature, node: card }); return card;
+    });
+    for (const id of libraryCache.keys()) if (!complete.some(job => job.id === id)) libraryCache.delete(id);
+    syncChildren($('library-grid'), cards);
+  }
+  function render() {
+    renderModels(); renderStatus();
+    const signature = JSON.stringify({ jobs: state.jobs, models: state.models.map(model => [model.id, model.name]) });
+    if (signature !== lastContentSignature) {
+      lastContentSignature = signature;
+      const jobs = newestJobs();
+      renderChat(jobs); renderQueue(jobs); renderLibrary(jobs);
+    }
+    const warning = [state.recoveryWarning, state.queueError, state.credentialWarning].filter(Boolean).join(' ');
+    $('system-banner').textContent = warning;
+    $('system-banner').hidden = !warning;
+    if (warning && warning !== lastWarning) showToast(warning, true);
+    lastWarning = warning;
+  }
+  async function refresh() {
+    if (!bridge) throw new Error('The desktop connection is unavailable. Please reopen AI Video Studio.');
+    if (refreshPromise) { refreshAgain = true; return refreshPromise; }
+    refreshPromise = (async () => {
+      do {
+        refreshAgain = false;
+        const next = await bridge.snapshot();
+        state = { ...next, jobs: Array.isArray(next.jobs) ? next.jobs : [], models: Array.isArray(next.models) ? next.models : [] };
+        render();
+      } while (refreshAgain);
+    })();
+    try { await refreshPromise; }
+    finally { refreshPromise = null; }
+  }
+  function scheduleRefresh() {
+    clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(() => refresh().catch(error => showToast(errorMessage(error), true)), 100);
+  }
+  function batchPrompts() { return $('batch-input').value.split(/\r?\n/).map(line => line.trim()).filter(Boolean); }
+  function updatePromptLength() { $('prompt-length').textContent = $('prompt-input').value.length.toLocaleString() + ' / 10,000'; }
+  async function showApproval() {
+    await refresh();
+    const pending = state.jobs.filter(job => job.status === 'pending');
+    const monitoringOnly = pending.length === 0 && state.jobs.some(job => IN_PROGRESS.has(job.status) && job.remote) && state.paused;
+    if (!pending.length && !monitoringOnly) { showToast('Add a prompt to the queue first.'); return; }
+    if (!state.credentials?.fal) { setView('settings'); $('fal-key').focus(); showToast('Save your fal.ai API key before starting the queue.', true); return; }
+    const unavailable = pending.find(job => !state.models.find(model => model.id === job.modelId)?.available);
+    if (unavailable) throw new Error('The queue includes an unavailable model. Remove that prompt before starting.');
+    approvalIds = pending.map(job => job.id);
+    $('approval-title').textContent = monitoringOnly ? 'Resume progress checks' : 'Approve this generation batch';
+    $('approval-description').textContent = monitoringOnly
+      ? 'Resume checking your already submitted provider requests and download any finished videos. No new video generation requests are included.'
+      : 'You are approving ' + pending.length + (pending.length === 1 ? ' video request' : ' video requests') + ' to fal.ai. The studio will submit these prompts in order using remote GPUs.';
+    $('approval-prompts-wrap').hidden = monitoringOnly;
+    $('approval-warning-text').textContent = monitoringOnly
+      ? 'The provider may still charge for requests submitted earlier. Resuming checks does not submit those prompts again.'
+      : 'Your provider may charge for each request. Pricing depends on the model and your account. This approval covers only these prompts during this session. New prompts need a new approval.';
+    $('approve-start').replaceChildren(document.createTextNode(monitoringOnly ? 'Resume monitoring ' : 'Approve & start '), icon('arrow-right'));
+    const counts = new Map();
+    pending.forEach(job => counts.set(job.modelId, (counts.get(job.modelId) || 0) + 1));
+    $('approval-models').replaceChildren(...[...counts].map(([modelId, count]) => element('span', 'approval-model-chip', modelName(modelId) + ' × ' + count)));
+    $('approval-prompts').replaceChildren(...pending.map(job => element('li', '', job.prompt)));
+    $('approval-dialog').showModal();
+  }
+
+  decorateIcons();
+  $('settings-form').querySelector('.settings-buttons').append(button('Open fal.ai', () => bridge.openProviderSite(), 'arrow-right'));
+  document.querySelector('.voice-panel .field-help').textContent = 'Voice is transcribed locally with Windows speech or the included offline Whisper model. No provider credits or speech language download is needed.';
+  document.querySelectorAll('[data-view]').forEach(node => node.addEventListener('click', () => { setView(node.dataset.view); renderStatus(); }));
+  document.querySelector('.brand').addEventListener('click', event => { event.preventDefault(); setView('create'); renderStatus(); });
+  $('top-settings').addEventListener('click', () => { setView('settings'); renderStatus(); });
+  $('connect-provider').addEventListener('click', () => { setView('settings'); renderStatus(); $('fal-key').focus(); });
+  $('footer-queue').addEventListener('click', () => { setView('queue'); renderStatus(); });
+  $('prompt-input').addEventListener('input', updatePromptLength);
+  $('prompt-input').addEventListener('keydown', event => {
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); $('prompt-form').requestSubmit(); }
+  });
+  $('prompt-form').addEventListener('submit', event => {
+    event.preventDefault();
+    action(async () => {
+      const prompt = $('prompt-input').value.trim();
+      if (!prompt) throw new Error('Describe the video you want to create.');
+      await bridge.addPrompts({ prompts: [prompt], modelId: $('create-model').value });
+      $('prompt-input').value = ''; updatePromptLength();
+      showToast('Prompt saved. Review your queue when you’re ready to generate.');
+      await refresh(); $('chat-feed').scrollTop = $('chat-feed').scrollHeight;
+    }, $('add-prompt'));
+  });
+  $('create-model').addEventListener('change', renderStatus);
+  $('batch-model').addEventListener('change', renderStatus);
+  $('batch-input').addEventListener('input', renderStatus);
+  $('add-batch').addEventListener('click', () => action(async () => {
+    const prompts = batchPrompts();
+    if (!prompts.length) throw new Error('Enter at least one prompt, one per line.');
+    if (prompts.some(prompt => prompt.length > 10000)) throw new Error('Each prompt must be 10,000 characters or fewer.');
+    await bridge.addPrompts({ prompts, modelId: $('batch-model').value });
+    $('batch-input').value = '';
+    showToast(prompts.length + (prompts.length === 1 ? ' prompt saved.' : ' prompts saved.') + ' Review the batch before starting.');
+  }, $('add-batch')));
+  $('import-prompts').addEventListener('click', () => action(async () => {
+    const imported = await bridge.pickPromptsFile();
+    if (!imported) return;
+    $('batch-input').value = imported.text;
+    renderStatus();
+    const count = batchPrompts().length;
+    showToast(count + (count === 1 ? ' prompt loaded.' : ' prompts loaded.') + ' Review the text and choose Add prompts.');
+  }, $('import-prompts')));
+  $('pause-queue').addEventListener('click', () => action(async () => { await bridge.pauseQueue(); showToast('New submissions paused. Already submitted requests may continue at your provider.'); }, $('pause-queue')));
+  $('review-queue').addEventListener('click', () => action(showApproval, $('review-queue')));
+  $('approve-start').addEventListener('click', () => action(async () => {
+    const monitoringOnly = approvalIds.length === 0;
+    await bridge.startQueue({ approvedJobIds: [...approvalIds] });
+    $('approval-dialog').close(); approvalIds = [];
+    showToast(monitoringOnly ? 'Provider progress checks resumed.' : 'Approved batch started. You can pause new submissions at any time.');
+  }, $('approve-start')));
+  $('approval-dialog').addEventListener('close', () => { approvalIds = []; });
+  $('settings-form').addEventListener('submit', event => {
+    event.preventDefault();
+    const control = $('settings-form').querySelector('button[type="submit"]');
+    action(async () => {
+      const key = $('fal-key').value.trim();
+      if (!key) throw new Error('Paste your fal.ai API key first.');
+      await bridge.saveSettings({ falKey: key });
+      $('fal-key').value = ''; $('fal-key').type = 'password'; $('toggle-key').setAttribute('aria-label', 'Show API key');
+      showToast('Connection saved securely. Your queue remains under your control.');
+    }, control);
+  });
+  $('remove-key').addEventListener('click', () => action(async () => { await bridge.saveSettings({ clearFalKey: true }); $('fal-key').value = ''; showToast('API key removed. New submissions are paused.'); }, $('remove-key')));
+  $('toggle-key').addEventListener('click', () => {
+    const visible = $('fal-key').type === 'password';
+    $('fal-key').type = visible ? 'text' : 'password';
+    $('toggle-key').setAttribute('aria-label', visible ? 'Hide API key' : 'Show API key');
+  });
+  $('voice-button').addEventListener('click', () => action(async () => {
+    dictating = true; $('voice-button').classList.add('listening'); $('voice-label').textContent = 'Listening / transcribing…';
+    showToast('Speak your prompt now. Voice input is processed locally; allow a moment for transcription.');
+    try {
+      const result = await bridge.dictate();
+      const text = String(result?.text || '').trim();
+      if (!text) throw new Error('No speech was recognized. Try again or type your prompt.');
+      const current = $('prompt-input').value.trim();
+      const combined = current ? current + ' ' + text : text;
+      if (combined.length > 10000) throw new Error('Your prompt is too long. Shorten it before adding more dictation.');
+      $('prompt-input').value = combined; updatePromptLength(); $('prompt-input').focus();
+      showToast('Voice prompt added. Edit it before adding to your queue.');
+    } finally {
+      dictating = false; $('voice-button').classList.remove('listening'); $('voice-label').textContent = 'Voice prompt';
+    }
+  }, $('voice-button')));
+
+  if (bridge) {
+    bridge.onChange(scheduleRefresh);
+    bridge.getVersion().then(version => { $('version').textContent = 'Version ' + version; }).catch(() => {});
+    refresh().catch(error => { $('footer-state').textContent = 'Workspace could not be loaded'; showToast(errorMessage(error), true); });
+  } else {
+    $('footer-state').textContent = 'Desktop connection unavailable';
+    $('chat-feed').replaceChildren(emptyState('Open the desktop application', 'AI Video Studio needs its desktop connection to save prompts and connect to providers.', 'info'));
+    showToast('Please open AI Video Studio from its installed Windows application.', true);
+  }
+})();
