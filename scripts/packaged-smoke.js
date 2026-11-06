@@ -21,16 +21,19 @@ async function main() {
     const page = await application.firstWindow();
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
-    await page.waitForFunction(async () => Boolean(window.studio && (await window.studio.snapshot()).models.length === 5));
+    await page.waitForFunction(async () => Boolean(window.studio && (await window.studio.snapshot()).models.length === 6));
     await page.waitForFunction(async () => (await window.studio.snapshot()).voiceAvailable === true, { timeout: 20000 });
     const info = await application.evaluate(({ app }) => ({ packaged: app.isPackaged, version: app.getVersion(), dataPath: app.getPath('userData'), resources: process.resourcesPath }));
     assert.equal(info.packaged, true);
-    assert.equal(info.version, '1.0.0');
+    assert.equal(info.version, '1.1.0');
     assert.equal(await page.evaluate(() => typeof require), 'undefined');
     const state = await page.evaluate(() => window.studio.snapshot());
     assert.equal(state.paused, true);
-    assert.equal(state.models.length, 5);
-    assert.equal(state.models.every(model => model.available), true);
+    assert.equal(state.models.length, 6);
+    assert.equal(state.models.filter(model => model.available).length, 1);
+    assert.equal(state.freeOnly, true);
+    assert.equal(state.ready, true);
+    assert.equal(await page.locator('input[type="password"]').count(), 0);
     assert.equal(state.voiceAvailable, true);
     assert.equal(await application.evaluate(() => global.__packagedNetworkCalls), 0);
     assert.ok(fs.existsSync(path.join(info.resources, 'voice', 'bin', 'whisper-cli.exe')));
@@ -40,7 +43,7 @@ async function main() {
     fs.writeFileSync(path.join(evidence, 'installed-summary.json'), JSON.stringify({ passed: true, ...info,
       models: state.models.map(model => model.name), voiceAvailable: true, paused: true,
       savedJobs: state.jobs.length, providerRequests: 0 }, null, 2));
-    console.log(`Installed application verified: ${info.version}, five remote models, offline voice available, paused queue, zero provider requests.`);
+    console.log(`Installed application verified: ${info.version}, free-only remote provider, no API key needed, offline voice available, paused queue, zero provider requests.`);
     console.log(`Saved data location: ${info.dataPath}`);
   } finally { await application.close(); }
 }

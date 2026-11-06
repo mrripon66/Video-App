@@ -1,7 +1,7 @@
 {
   "name": "ai-video-studio",
-  "version": "1.0.0",
-  "description": "A private Windows studio for real remote AI video generation.",
+  "version": "1.1.0",
+  "description": "A free-only Windows studio using quota-limited shared GPU video generation.",
   "author": "mrripon66",
   "license": "MIT",
   "main": "src/main/index.js",

@@ -83,7 +83,15 @@ class Queue {
     if (this._runner) throw new Error('Stop the queue before recovering saved jobs.');
     this.store.mutate(state => {
       for (const job of state.jobs) {
-        if (this.store.recoveryWarning && ACTIVE.has(job.status) && !job.remote) {
+        if (ACTIVE.has(job.status) && typeof job.remoteVideoUrl === 'string' && job.remoteVideoUrl) {
+          // Completion event streams may not replay after a restart. Once the
+          // output address is saved, recover the file directly instead of
+          // reopening that stream or creating another generation request.
+          job.status = 'needs_attention';
+          job.phase = 'download_failed';
+          job.error = 'This generated video has a saved output address, but its download was interrupted. Retry the saved download without submitting or monitoring the provider again.';
+          job.updatedAt = now();
+        } else if (this.store.recoveryWarning && ACTIVE.has(job.status) && !job.remote) {
           job.status = 'needs_attention';
           job.error = 'This queue was restored from a backup which may predate an accepted submission. Check the provider dashboard before manually retrying this prompt.';
           job.updatedAt = now();
@@ -91,7 +99,7 @@ class Queue {
           if (job.remote && job.remote.requestId) job.status = 'queued';
           else {
             job.status = 'needs_attention';
-            job.error = 'The app closed during submission. The provider may have accepted and charged for this request. Check your provider dashboard before retrying.';
+            job.error = 'The app closed during submission. The provider may have accepted this request and used your quota. Check its saved progress before retrying.';
           }
           job.updatedAt = now();
         } else if (REMOTE_ACTIVE.has(job.status) && !(job.remote && job.remote.requestId)) {
@@ -180,14 +188,14 @@ class Queue {
         remote = await provider.submit(initial.modelId, initial.prompt);
         if (!remote || typeof remote.requestId !== 'string' || !remote.requestId) throw new Error('The provider accepted no usable request reference.');
       } catch (error) {
-        if ([401, 402, 403, 429].includes(error.httpStatus)) {
+        if (error.pauseQueue === true || [401, 402, 403, 429].includes(error.httpStatus)) {
           this.paused = true;
           this._approved.clear();
         }
         this._update(initial.id, job => {
           const definitive = error.submissionUncertain === false || (Number.isInteger(error.httpStatus) && error.httpStatus >= 400 && error.httpStatus < 500 && error.httpStatus !== 408);
           job.status = definitive ? 'failed' : 'needs_attention';
-          job.error = definitive ? detail(error) : `Submission outcome is unknown. The provider may have accepted and charged for this request. Check its dashboard before retrying. ${detail(error)}`;
+          job.error = definitive ? detail(error) : `Submission outcome is unknown. The provider may have accepted this request and used your quota. Check its saved progress before retrying. ${detail(error)}`;
         });
         return;
       }
@@ -211,9 +219,15 @@ class Queue {
         errors = 0;
       } catch (error) {
         if (!stillCurrent() || TERMINAL.has(this._job(current.id).status)) return;
+        if (error.pauseQueue === true) {
+          this.paused = true;
+          this._approved.clear();
+          this._update(current.id, job => { job.status = 'needs_attention'; job.error = `Provider monitoring stopped and the queue is paused. The saved request can be resumed manually. ${detail(error)}`; });
+          return;
+        }
         errors++;
         if (errors >= this.maxPollErrors) {
-          this._update(current.id, job => { job.status = 'needs_attention'; job.error = `Could not monitor the provider. The request is saved; resume it without paying for another submission. ${detail(error)}`; });
+          this._update(current.id, job => { job.status = 'needs_attention'; job.error = `Could not monitor the provider. Resume the saved request without submitting again. ${detail(error)}`; });
           return;
         }
         await this._wait();
@@ -231,6 +245,10 @@ class Queue {
         return;
       }
       if (result.status === 'failed' || result.status === 'cancelled') {
+        if (result.pauseQueue === true) {
+          this.paused = true;
+          this._approved.clear();
+        }
         this._update(current.id, job => {
           job.status = result.status;
           if (result.status === 'cancelled') job.cancellation = 'confirmed';
@@ -253,8 +271,8 @@ class Queue {
       if (typeof videoPath !== 'string' || !videoPath) throw new Error('The downloaded video file was not saved.');
       this._update(id, item => { item.videoPath = videoPath; item.status = 'completed'; item.completedAt = now(); delete item.error; delete item.phase; });
     } catch (error) {
-      // Preserve the paid output and stop before paying for more videos that
-      // may also be impossible to save (for example, when the disk is full).
+      // Preserve the generated output and stop before using more quota for
+      // videos that may also be impossible to save (for example, a full disk).
       this.paused = true;
       this._approved.clear();
       this._update(id, item => { item.status = 'needs_attention'; item.phase = 'download_failed'; item.error = `Your provider output is ready, but saving it failed. Retry the download without generating again. ${detail(error)}`; });
@@ -272,7 +290,7 @@ class Queue {
       this._update(id, item => { item.cancelRequested = true; item.cancellation = 'requested'; });
       if (job.remote) {
         try { await this._cancelRemote(id, this.providerFactory(this._model(job.modelId))); }
-        catch (error) { this._update(id, item => { item.cancellationError = `Cancellation could not be confirmed. The provider may continue and charge for the request. ${detail(error)}`; }); }
+        catch (error) { this._update(id, item => { item.cancellationError = `Cancellation could not be confirmed. The provider may continue using your quota. ${detail(error)}`; }); }
       }
     }
     return this.snapshot();
@@ -295,7 +313,7 @@ class Queue {
     } catch (error) {
       this._update(id, item => {
         if (!item.remote || item.remote.requestId !== job.remote.requestId) return;
-        item.cancellationError = `Cancellation could not be confirmed. The provider may continue and charge for the request. ${detail(error)}`;
+        item.cancellationError = `Cancellation could not be confirmed. The provider may continue using your quota. ${detail(error)}`;
       });
     }
   }

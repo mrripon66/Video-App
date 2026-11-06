@@ -1,30 +1,34 @@
 # AI Video Studio
 
-A Windows desktop studio for creating videos with remote GPU providers. The application runs on CPU-only PCs; models run on fal.ai. No Python, Node.js, development server, or local GPU is needed to use the installer.
+A free-only Windows desktop studio for quota-limited remote AI video generation. Version 1.1 uses the official Lightricks LTX Video 0.9.8 distilled Space on Hugging Face ZeroGPU anonymously. No API key, payment card, paid account, local GPU, Python, Node.js, or development server is needed to use the installer. Paid providers are disabled.
 
 ## Install and use
 
-Download `AI-Video-Studio-Setup-1.0.0-x64.exe` from the Windows build artifact on the repository's **Actions** page. Install for your Windows account and open **AI Video Studio** from the Start menu or desktop shortcut. This initial release is unsigned, so Windows may display an unknown-publisher warning.
+Download `AI-Video-Studio-Setup-1.1.0-x64.exe` from the release or Windows build artifact on the repository's **Actions** page. Install for your Windows account and open **AI Video Studio** from the Start menu or desktop shortcut. This release is unsigned, so Windows may display an unknown-publisher warning.
 
-1. Open **Settings**, enter your own fal.ai API key, and save it. Keys are encrypted with Windows credential protection and never sent to the interface.
+1. Open the app. The free provider is configured automatically; no account key setup is required.
 2. In **Create**, type a prompt and choose a model. **Voice prompt** uses your default microphone and local speech recognition. The installer includes an offline Whisper model, so a Windows speech language pack is optional. Speak a short prompt, allow a moment for CPU transcription, then edit the text before adding it.
 3. Add prompts to the queue. **Batch queue** also imports a UTF-8 `.txt` file, one prompt per nonempty line, with up to 400 active prompts.
-4. Review the queue and approve the exact pending batch before starting. fal.ai charges your provider account according to its current pricing. The app does not invent estimates or purchase credits.
+4. Review the exact prompts and start the free queue. Approved prompts are sent to the public Lightricks Space. Waiting queues, downtime, and daily GPU quotas can stop a batch; the app never switches to a paid service.
 5. Completed videos are downloaded to your local **Library**. Play, export, or reveal their files.
 
-The queue starts paused at every launch. Pause prevents new submissions while an already submitted request may continue at the provider. A cancellation request does not guarantee a refund. Uncertain submissions are held for review instead of being automatically sent again. Use **Retry / recover** to monitor a saved request or download its result without generating another video.
+The queue starts paused at every launch. Pause prevents new submissions while an already submitted request may continue using your free quota. The public service does not expose reliable cancellation through this API. Uncertain submissions are held for review instead of being sent again automatically. Use **Retry / recover** to monitor a saved request or download its result without generating another video.
+
+## Free-service limits
+
+Hugging Face currently documents 2 GPU minutes per day for anonymous use and 5 for a free account, with shared queues. This application uses anonymous access only, without tokens or automatic paid overages. The selected Space uses an xlarge GPU, which consumes quota at twice the standard rate. A short clip may use most of the available quota. The app stores 400 active prompts; that is saved queue capacity, not a promise of 400 free generations per day. It stops on quota errors instead of bypassing limits, retrying endlessly, or charging you. [Official quota documentation](https://huggingface.co/docs/hub/spaces-zerogpu).
 
 ## Models and scope
 
-Wan 2.1, LTX 2.3 Fast, CogVideoX-5B, Hunyuan Video, and AnimateDiff use documented fal queue APIs. See [provider documentation](docs/PROVIDERS.md) for exact endpoints, default settings, and source links. Availability in the catalog means a documented integration exists; account access and generation remain subject to the provider.
+LTX Video 0.9.8 distilled is the verified free prompt-to-video integration. Wan, LTX 2.3, CogVideoX, Hunyuan and AnimateDiff remain visible as unavailable because no free API is configured for them. The previous paid fal integrations cannot be selected or invoked through this release. See [provider documentation](docs/PROVIDERS.md) for the exact Space, settings, quota limits and verification evidence.
 
 The chat-style workspace records your prompts and generation progress. It does not claim to be a conversational language model. No stock clips, simulated videos, or fabricated download URLs are included.
 
 ## Privacy and saved data
 
-Prompts are sent to fal.ai only after queue approval. Voice dictation runs locally using Windows speech or bundled Whisper. Temporary microphone recordings are removed after transcription. There is no application analytics service. API traffic remains in the main process; the interface is isolated and cannot read the key. Downloaded output is limited to documented fal media hosts and screened MP4/WebM containers.
+Prompts are sent to the public Hugging Face Space only after queue approval. Voice dictation runs locally using Windows speech or bundled Whisper. Temporary microphone recordings are removed after transcription. There is no application analytics service. Provider requests contain no account token or payment credentials. Downloads are restricted to reviewed hosts and screened MP4/WebM containers. Treat prompts sent to the public demo as information shared with that third-party service.
 
-Windows data lives in `%APPDATA%\ai-video-studio\`: `studio.json`, a backup, `credentials.bin`, and `videos\`. Uninstalling keeps this folder so your queue and library survive upgrades. Back up this folder to preserve your work; encrypted keys are tied to your Windows account. Do not commit it to source control.
+Windows data lives in `%APPDATA%\ai-video-studio\`: `studio.json`, a backup, and `videos\`. Old encrypted credentials from version 1.0, if any, are not loaded or used by free-only mode. Uninstalling keeps the folder so your queue and library survive upgrades. Back up this folder to preserve your work; do not commit it to source control.
 
 ## Development
 
@@ -43,10 +47,10 @@ npm start
 npm run dist:win
 ```
 
-Tests use temporary local data and mocked provider responses. They never submit real video generation requests or spend credits. Desktop tests launch the actual Electron application and verify offline interactions, persistence, and the payment approval boundary. GitHub Actions runs the same checks on Windows and uploads a complete NSIS installer with a SHA-256 checksum.
+Automated tests use temporary local data and mocked provider responses. They never submit real generation requests. Desktop tests launch the actual Electron application and verify free-only provider selection, paid-key rejection, batch approval, persistence, and playback. GitHub Actions runs these checks on Windows and uploads a complete NSIS installer with a SHA-256 checksum.
 
 The application uses Electron's bundled runtime and local HTML/CSS/JavaScript. There is no localhost frontend or backend process to start. The build downloads pinned, checksum-verified offline voice components; the installer includes them. See [voice setup and licenses](docs/VOICE.md). No signing certificate or provider key is embedded in the source, build, or installer.
 
 ## Verification limits
 
-An actual paid generation and a spoken microphone transcription require the account holder's approval and hardware. Neither is represented as tested by offline contract tests. Provider/API changes can make a model unavailable; errors remain visible in the queue. See [validation notes](docs/VALIDATION.md) for this build's actual checks.
+A spoken microphone test still requires the user's voice and hardware. Free GPU availability can change or a daily quota can be exhausted; the app reports those errors rather than inventing an output. See [validation notes](docs/VALIDATION.md) for observed checks and any live free-generation result.
