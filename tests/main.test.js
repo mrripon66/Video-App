@@ -7,6 +7,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { Vault } = require('../src/main/vault');
 const { downloadVideo, validateMediaUrl, isVideo } = require('../src/main/download');
+const { FREE_SPACE_ORIGINS } = require('../src/core/free-provider');
 
 function temporary(t) {
   const parent = path.resolve(__dirname, '..', '.test-data');
@@ -148,16 +149,19 @@ test('trusted relative redirects save actual MP4 bytes atomically under the job 
 });
 
 test('the verified anonymous free Space output downloads without credentials', async t => {
-  const directory = temporary(t), expected = mp4(), calls = [];
-  const source = 'https://lightricks-ltx-video-distilled.hf.space/gradio_api/file=/tmp/gradio/test/video.mp4';
-  const saved = await downloadVideo(source, 'free-space-output', directory, async (url, options) => {
-    calls.push({ url: String(url), options });
-    return new Response(expected, { headers: { 'Content-Type': 'video/mp4' } });
-  });
-  assert.deepEqual(fs.readFileSync(saved), expected);
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].url, source);
-  assert.equal(calls[0].options.headers, undefined);
+  const directory = temporary(t), expected = mp4();
+  for (const [index, origin] of FREE_SPACE_ORIGINS.entries()) {
+    const calls = [];
+    const source = origin + (origin.includes('bytedance') ? '/file=' : '/gradio_api/file=') + '/tmp/gradio/test/video.mp4';
+    const saved = await downloadVideo(source, 'free-space-output-' + index, directory, async (url, options) => {
+      calls.push({ url: String(url), options });
+      return new Response(expected, { headers: { 'Content-Type': 'video/mp4' } });
+    });
+    assert.deepEqual(fs.readFileSync(saved), expected);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, source);
+    assert.equal(calls[0].options.headers, undefined);
+  }
 });
 
 test('valid MP4 containers may include an empty free or skip box before media', () => {

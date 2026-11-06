@@ -3,11 +3,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { Readable, Transform } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
+const { FREE_SPACE_ORIGINS } = require('../core/free-provider');
 
 function validateMediaUrl(value) {
   const url = new URL(value);
   if (url.protocol !== 'https:' || url.username || url.password || (url.port && url.port !== '443') ||
-    !(url.hostname === 'fal.media' || url.hostname.endsWith('.fal.media') || url.hostname === 'fal-cdn.batuhan-941.workers.dev' || url.hostname === 'lightricks-ltx-video-distilled.hf.space')) {
+    !(url.hostname === 'fal.media' || url.hostname.endsWith('.fal.media') || url.hostname === 'fal-cdn.batuhan-941.workers.dev' || FREE_SPACE_ORIGINS.includes(url.origin))) {
     throw new Error('The provider returned an unsupported media host. No file was downloaded.');
   }
   return url;

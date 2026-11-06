@@ -6,12 +6,17 @@ const path = require('node:path');
 const { _electron: electron } = require('@playwright/test');
 const executablePath = require('electron');
 const { Store } = require('../src/core/store');
+const { fixtureBytes } = require('./test-media');
 
 async function main() {
   const root = path.resolve(__dirname, '..');
   const evidence = path.join(root, 'test-results');
   fs.mkdirSync(evidence, { recursive: true });
   const dataDir = fs.mkdtempSync(path.join(evidence, 'recovery-data-'));
+  const media = await fixtureBytes(evidence);
+  const savedShotPath = path.join(dataDir, 'videos', 'test-only-saved-shot.webm');
+  fs.mkdirSync(path.dirname(savedShotPath));
+  fs.writeFileSync(savedShotPath, media);
   const requestId = 'test-only-recovery-request';
   const eventUrl = `https://lightricks-ltx-video-distilled.hf.space/gradio_api/call/text_to_video/${requestId}`;
   const createdAt = new Date().toISOString();
@@ -28,6 +33,11 @@ async function main() {
         error: 'TEST ONLY: submission outcome is uncertain; check your saved request.', attempts: [] },
       { id: 'recovery-cancel-error', prompt: 'TEST ONLY: failed cancellation warning', modelId: 'ltx-free', status: 'needs_attention', createdAt,
         cancellation: 'requested', cancellationError: 'TEST ONLY: cancellation could not be confirmed; the provider may continue using quota.', attempts: [] },
+      { id: 'recovery-story-partial', prompt: 'TEST ONLY: quota-paused two-shot video with one downloaded test fixture', modelId: 'ltx2-story-free', status: 'failed', createdAt,
+        videoPlan: { durationSeconds: 15, segments: [{ prompt: 'TEST ONLY shot one', durationSeconds: 10 }, { prompt: 'TEST ONLY shot two', durationSeconds: 5 }] },
+        segments: [{ prompt: 'TEST ONLY shot one', durationSeconds: 10, status: 'completed', videoPath: savedShotPath },
+          { prompt: 'TEST ONLY shot two', durationSeconds: 5, status: 'failed', error: 'TEST ONLY: free GPU quota exhausted.' }], segmentIndex: 1, phase: 'generating',
+        error: 'TEST ONLY: free GPU quota is exhausted. The completed shot remains saved.', attempts: [] },
     ];
   });
 
@@ -60,7 +70,7 @@ async function main() {
     }, eventUrl);
     page = await application.firstWindow();
     page.on('pageerror', error => pageErrors.push(error.message));
-    await page.waitForFunction(async () => Boolean(window.studio && (await window.studio.snapshot()).models.length === 6));
+    await page.waitForFunction(async () => Boolean(window.studio && (await window.studio.snapshot()).models.some(model => model.id === 'ltx2-story-free')));
     await page.locator('[data-view="queue"]').click();
     await page.waitForFunction(() => document.getElementById('nav-queue-count').textContent === '3');
 
@@ -74,6 +84,12 @@ async function main() {
     await page.locator('#batch-input').fill(Array.from({ length: 398 }, (_, i) => `Boundary verification prompt ${i + 1}`).join('\n'));
     assert.equal(await page.locator('#add-batch').isDisabled(), true, 'The renderer prevents a batch that would exceed capacity including attention jobs.');
     await page.locator('#batch-input').fill('');
+    const partialStory = page.locator('#queue-list [data-progress-job="recovery-story-partial"]');
+    assert.match(await partialStory.innerText(), /1 of 2 shots saved/);
+    assert.match(await partialStory.innerText(), /15s target/);
+    assert.match(await partialStory.innerText(), /saved shot is kept/);
+    assert.equal(await partialStory.getByRole('progressbar').getAttribute('aria-valuenow'), '1');
+    assert.equal(await partialStory.getByRole('progressbar').getAttribute('aria-valuemax'), '2');
 
     const pendingCancel = page.locator('#queue-list .queue-row').filter({ hasText: 'TEST ONLY: saved provider request, cancellation pending' });
     assert.match(await pendingCancel.innerText(), /cancellation.*not confirmed/i);
@@ -83,14 +99,7 @@ async function main() {
     assert.equal(await attention.getByRole('button', { name: /^(?:Remove|Stop)$/ }).isEnabled(), true, 'Attention items can be removed from active capacity.');
 
     await page.locator('#review-queue').click();
-    await page.locator('#approval-dialog').waitFor({ state: 'visible' });
-    assert.match(await page.locator('#approval-title').innerText(), /Resume progress checks/);
-    assert.match(await page.locator('#approval-description').innerText(), /no new video generation requests/i);
-    assert.equal(await page.locator('#approval-prompts li').count(), 0);
-    assert.equal(await page.locator('#approval-prompts-wrap').isHidden(), true);
-    assert.match(await page.locator('#approve-start').innerText(), /Resume monitoring/);
-    await page.locator('#approve-start').click();
-    await page.locator('#approval-dialog').waitFor({ state: 'hidden' });
+    assert.equal(await page.locator('dialog').count(), 0, 'Monitoring starts directly without an approval dialog.');
     await page.waitForFunction(async () => {
       const snapshot = await window.studio.snapshot();
       return snapshot.running && snapshot.activeJobId === 'recovery-remote-job';
@@ -111,9 +120,9 @@ async function main() {
     assert.equal((await page.evaluate(() => window.studio.snapshot())).paused, true);
     assert.deepEqual(pageErrors, [], 'Recovery has no uncaught renderer errors.');
     fs.writeFileSync(path.join(evidence, 'recovery-summary.json'), JSON.stringify({ passed: true, pendingPrompts: 0,
-      savedRemoteRequests: 1, attentionItems: 2, providerSubmissions: network.submissions, fixtureStatusPolls: network.polls,
+      savedRemoteRequests: 1, attentionItems: 2, savedStoryShots: 1, providerSubmissions: network.submissions, fixtureStatusPolls: network.polls,
       actualNetworkRequests: 0, checked: ['paused recovery', 'monitoring-only review', 'empty approval IDs', 'saved-handle SSE monitoring',
-        'attention capacity', 'attention removal', 'unconfirmed cancellation copy', 'failed cancellation copy', 'no fabricated videos'],
+        'attention capacity', 'attention removal', 'saved multi-shot progress', 'planned duration shown', 'unconfirmed cancellation copy', 'failed cancellation copy', 'no fabricated videos'],
       limitations: ['Test-only event-stream fixtures, not live provider generation', 'No provider quota used'] }, null, 2));
     console.log('Recovery desktop verification passed: saved-request monitoring with zero pending prompts, correct attention capacity, visible cancellation warnings, zero video submissions.');
   } finally {
