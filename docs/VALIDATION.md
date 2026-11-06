@@ -4,11 +4,11 @@ Verification date: November 5, 2026. This record identifies checks completed loc
 
 ## Automated checks
 
-`npm test` currently passes **62 tests** on Windows with Node.js 26.13.0:
+`npm test` currently passes **63 tests** on Windows with Node.js 26.13.0:
 
 | Group | Result | Scope |
 | --- | ---: | --- |
-| Store and queue | 24 passed | Atomic persistence, backups, 400 active prompts, exact reviewed IDs, paused restarts, uncertain submission handling, saved-request monitoring, download recovery, cancellation races, single-flight operations and stopping the batch on provider/quota signals. |
+| Store and queue | 25 passed | Atomic persistence, backups, 400 active prompts, exact reviewed IDs, paused restarts, uncertain submission handling, saved-request monitoring, download recovery including interrupted downloads across restart without replaying a consumed event stream, cancellation races, single-flight operations and stopping the batch on provider/quota signals. |
 | Free LTX provider | 14 passed | Anonymous fixed-origin requests, credential/custom-endpoint rejection, live-schema preflight contract, Gradio event handles, fragmented CRLF SSE, returned VideoData, quota stops, failed streams, bounded time/size, and unsupported cancellation. Network responses are injected test fixtures. |
 | Credential vault and downloader | 14 passed | Encryption/storage contracts retained from the earlier implementation; trusted media hosts, redirects, atomic saves, container screening, valid empty MP4 `free`/`skip` boxes, and partial-file cleanup. The free-only UI does not configure provider credentials. |
 | Legacy paid-provider contract | 10 passed | Historical fal request handling. These tests do not make paid calls; the free-only desktop factory does not enable that provider. |
@@ -23,15 +23,17 @@ The following desktop checks passed for the free-only 1.1 source:
 | Saved-request recovery | Passed. With zero new pending prompts, the monitoring-only review resumes a saved anonymous Gradio event stream. Attention items count toward capacity; removing one frees capacity. Unconfirmed cancellation details are visible. There are zero generation submissions and zero real network requests in this regression. |
 | Local video library | Passed. The library regression verifies playback, seeking and byte ranges using an official test video fixture, rather than a generated-provider output. |
 
-The earlier 1.0 Windows installer was built, installed and checked successfully. **The final updated free-only 1.1 installer and its installed application have not yet been verified.** Earlier installer results do not establish that the changed 1.1 package works.
+The final 1.1 installer completed successfully and upgraded the installed app. Packaged-app verification confirmed version 1.1.0, free-only readiness without an API key, one enabled free model and five disabled legacy entries, a paused queue, and local voice availability. Inspection of the installed archive confirmed the MP4 fix and a free-only factory with no paid-provider construction. The installed voice engine transcribed its public sample in about 1.1 seconds.
 
 ## Live free generation
 
-One anonymous free GPU generation request was accepted and completed by the provider, which returned a video URL. The application's downloader rejected that output's container before it could become a completed local-library video. Therefore, **successful live end-to-end generation, download and playback have not been established**.
+The first anonymous free request exposed a container-compatibility bug: valid empty MP4 `free` and `skip` boxes were rejected. The fix retains container screening and passes the expanded test suite. The simplified Gradio completion stream is consumed once, so the old test result could not be replayed; the production queue saves the returned media URL before downloading, and interrupted downloads recover from that URL rather than reopening a consumed stream.
 
-The subsequent local fix accepts valid empty MP4 `free` and `skip` boxes, addressing the suspected container-compatibility issue while retaining other screening checks. All 62 unit tests pass with the fix. A live follow-up is still needed to prove that the returned provider output can be saved and played; a local test pass does not replace that check.
+A fresh anonymous request using the same normal free provider quota completed on November 5, 2026 and returned a real video. The corrected downloader saved its 116,582-byte MP4 successfully. The prompt was: "A small red paper boat floating gently on a calm pond, soft morning light, steady cinematic camera." No account token, paid API request, purchase, identity rotation or quota bypass was used.
 
-Further live follow-up and updated installer/install checks are currently blocked because automatic approval review reached its usage limit for new elevated operations. No alternate agent, shell or browser was used to bypass that restriction. Offline code review, documentation and tests remain available. No authenticated or paid fallback is permitted.
+The actual generated output then passed production download recovery through the normal desktop `retryJob` action in an isolated workspace. Exactly one HTTPS media GET was made, with zero additional generation requests or unrelated network calls. The downloaded bytes matched the original MP4. The studio decoded 704 × 512 video with a 1.9-second duration, advancing playback and successful seeking, with no renderer errors. Evidence: `test-results/free-generated-summary.json` and `test-results/free-generated-playback.png`. This proves a real free provider output can be downloaded and played; these are not synthetic video results.
+
+Both accepted GPU requests used anonymous access to the fixed official Space. Automated CI tests remain offline with respect to video generation and do not consume the shared GPU quota.
 
 ## Recovery and cost boundary
 

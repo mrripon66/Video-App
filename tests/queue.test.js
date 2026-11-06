@@ -360,3 +360,39 @@ test('a terminal provider failure can stop the batch without retrying or consumi
   assert.deepEqual(queue.snapshot().jobs.map(job => job.status), ['failed', 'pending']);
   assert.deepEqual(queue.snapshot().jobs[0].remote, remote);
 });
+
+test('restart recovers an interrupted completed-output download without reopening the provider stream', async t => {
+  for (const interruptedStatus of ['queued', 'running']) {
+    const { queue, store, dir } = fixture(t);
+    const [job] = queue.addPrompts(['Generated video download interrupted by shutdown'], 'wan');
+    store.mutate(state => {
+      Object.assign(state.jobs[0], { status: interruptedStatus, remote, remoteVideoUrl: ready.videoUrl, phase: 'downloading' });
+    });
+    const reopenedStore = new Store(dir);
+    reopenedStore.load();
+    let providerCalls = 0;
+    let downloads = 0;
+    const recovered = new Queue({
+      store: reopenedStore, models,
+      providerFactory() { providerCalls++; throw new Error('The provider stream must not be reopened.'); },
+      download: async (url, id) => {
+        downloads++;
+        assert.equal(url, ready.videoUrl);
+        assert.equal(id, job.id);
+        return path.join(dir, 'recovered-output.mp4');
+      },
+      pollIntervalMs: 0,
+    });
+    t.after(() => recovered.dispose());
+    recovered.recover();
+    assert.equal(recovered.snapshot().paused, true);
+    assert.equal(recovered.snapshot().jobs[0].status, 'needs_attention');
+    assert.equal(recovered.snapshot().jobs[0].phase, 'download_failed');
+    assert.equal(recovered.snapshot().jobs[0].remoteVideoUrl, ready.videoUrl);
+    assert.match(recovered.snapshot().jobs[0].error, /Retry the saved download/);
+    await recovered.retryDownload(job.id);
+    assert.equal(recovered.snapshot().jobs[0].status, 'completed');
+    assert.equal(providerCalls, 0);
+    assert.equal(downloads, 1);
+  }
+});

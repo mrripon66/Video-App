@@ -83,7 +83,15 @@ class Queue {
     if (this._runner) throw new Error('Stop the queue before recovering saved jobs.');
     this.store.mutate(state => {
       for (const job of state.jobs) {
-        if (this.store.recoveryWarning && ACTIVE.has(job.status) && !job.remote) {
+        if (ACTIVE.has(job.status) && typeof job.remoteVideoUrl === 'string' && job.remoteVideoUrl) {
+          // Completion event streams may not replay after a restart. Once the
+          // output address is saved, recover the file directly instead of
+          // reopening that stream or creating another generation request.
+          job.status = 'needs_attention';
+          job.phase = 'download_failed';
+          job.error = 'This generated video has a saved output address, but its download was interrupted. Retry the saved download without submitting or monitoring the provider again.';
+          job.updatedAt = now();
+        } else if (this.store.recoveryWarning && ACTIVE.has(job.status) && !job.remote) {
           job.status = 'needs_attention';
           job.error = 'This queue was restored from a backup which may predate an accepted submission. Check the provider dashboard before manually retrying this prompt.';
           job.updatedAt = now();

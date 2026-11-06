@@ -44,10 +44,10 @@ Submission uses `POST /gradio_api/call/text_to_video`. Its actual `event_id` bec
 
 Only the exact verified Space origin is accepted. API redirects, credentials, custom endpoints and headers are rejected. Video addresses must use that same origin's `/gradio_api/file=/tmp/gradio/` endpoint. The event stream has time, message-size and total-size bounds. Changed schemas, malformed results, interrupted streams and quota errors stop safely. An unknown submission outcome is never automatically retried.
 
-There is no verified cancellation endpoint in this integration. Cancellation therefore reports that it is unconfirmed; a remote job may continue using free quota. Saved Gradio request references may expire when the Space restarts. The app preserves the local record and does not automatically submit a replacement.
+There is no verified cancellation endpoint in this integration. Cancellation therefore reports that it is unconfirmed; a remote job may continue using free quota. Gradio's simplified event stream is consumed as it is read, rather than durable replay storage, and saved request references may also expire when the Space restarts. Keep the studio open while generating. The app saves the actual output URL before downloading so interrupted downloads can recover from that URL without polling a consumed completion or submitting a replacement.
 
 ## Validation and maintenance
 
-Fourteen mocked provider tests pass, including fragmented CRLF event streams, missing results, malformed schemas, strict addresses, no authentication, quota stops, timeouts, and unsupported cancellation. No paid video request was made. A live free generation is recorded separately in [VALIDATION.md](VALIDATION.md) when performed; metadata access alone does not establish video quality or a successful output download.
+Fourteen mocked provider tests pass, including fragmented CRLF event streams, missing results, malformed schemas, strict addresses, no authentication, quota stops, timeouts, and unsupported cancellation. An actual anonymous free generation, corrected MP4 download, production desktop download recovery, and decoded playback/seeking also passed; see [VALIDATION.md](VALIDATION.md). No paid video request or purchase was made.
 
 Keep `src/core/free-provider.js` restricted to verified free endpoints. Add a model only after checking its actual API, quota behavior and returned media. A documented model name is not evidence of a usable free hosted service. Preserve the app's free-only boundary when updating dependencies or provider configuration.
