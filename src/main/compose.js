@@ -29,7 +29,7 @@ function runMedia(executable, args) {
       const durationSeconds = times.length ? Number(times.at(-1)[1]) / 1000000 : 0;
       const metadata = diagnostic.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
       const containerDuration = metadata ? Number(metadata[1]) * 3600 + Number(metadata[2]) * 60 + Number(metadata[3]) : null;
-      finish(null, { durationSeconds, containerDuration });
+      finish(null, { durationSeconds, containerDuration, diagnostic });
     });
   });
 }
@@ -92,4 +92,4 @@ function createComposer({ directory, executable = mediaExecutable() }) {
   };
 }
 
-module.exports = { createComposer, decodedDuration, mediaExecutable };
+module.exports = { createComposer, decodedDuration, mediaExecutable, runMedia };

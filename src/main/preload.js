@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('studio', Object.freeze({
   saveSettings: invoke('saveSettings'),
   pickPromptsFile: invoke('pickPromptsFile'),
   exportVideo: invoke('exportVideo'),
+  makeReel: invoke('makeReel'),
   revealVideo: invoke('revealVideo'),
   dictate: invoke('dictate'),
   getVersion: invoke('getVersion'),

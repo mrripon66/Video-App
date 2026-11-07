@@ -2,11 +2,11 @@
 
 A free-only Windows desktop studio with a chat-style prompt workspace, voice input, a persistent 400-prompt queue and a local video library. Video generation uses anonymous, quota-limited Hugging Face GPU services. Your Windows PC handles the interface, voice transcription, downloads and local video assembly; a dedicated GPU is not required.
 
-Version 1.2 adds a **15–20 second LTX film** option: two newly generated shots joined into one silent video. LTX 2.3 single clips and AnimateDiff short animations are also available. Wan, CogVideoX and Hunyuan remain unavailable for the specific reasons below. Paid providers are disabled, and no API key, payment card or paid account is required.
+Use the **15–20 second LTX film** option to join two newly generated shots. LTX 2.3 single clips and AnimateDiff short animations are also available. Version 1.3 adds vertical Reel export with locally generated stereo ambience. Wan, CogVideoX and Hunyuan show their availability in Settings. Video generation uses anonymous free GPU access.
 
 ## Install and use
 
-The local `AI-Video-Studio-Setup-1.2.0-x64.exe` installer was built and successfully upgraded the installed app to version 1.2.0. GitHub release/build publication is pending. Install for your Windows account, then open **AI Video Studio** from the Start menu or desktop shortcut. The installer includes its runtime, local voice components and media tool; Python, Node.js and a development server are not required. This release is unsigned, so Windows may show an unknown-publisher warning.
+Download the Windows x64 installer from [GitHub Releases](https://github.com/mrripon66/Video-App/releases). Install for your Windows account and open **AI Video Studio** from Start. The installer includes the desktop runtime, voice recognition and video tools. Windows may show an unknown-publisher warning because the installer is unsigned.
 
 1. In **Create**, type your prompt and choose a video option. **Voice prompt** records your voice and turns it into editable text locally.
 2. Click **Generate** to start directly. There is no review or approval popup. For the two-shot option, include a duration such as `18-second`, or use its 15-second default.
@@ -15,6 +15,10 @@ The local `AI-Video-Studio-Setup-1.2.0-x64.exe` installer was built and successf
 5. Completed videos appear in **Library**, where you can play, export or reveal the local files.
 
 The queue starts paused after every launch. Pause prevents new submissions; an accepted remote request may continue using free quota. Cancellation cannot be confirmed through these public APIs. Accepted requests and actual returned video addresses are saved for recovery rather than automatically generating replacements.
+
+## Make a Reel
+
+Click **Make Reel** on a completed video. Choose a full-screen center crop or fit the whole shot, then select **Gentle rain**, **Ocean surf**, **Quiet room**, or **Original sound only**. The app saves a separate 1080 × 1920 MP4 with H.264 video and stereo AAC when audio is present. The three ambience presets are synthesized on your PC and use zero GPU generation allowance.
 
 ## Video options
 

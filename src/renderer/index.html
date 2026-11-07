@@ -59,6 +59,36 @@
       <footer class="workspace-footer"><span><span class="footer-dot"></span><span id="footer-state">Loading workspace…</span></span><button id="footer-queue" class="text-button">Open queue <span aria-hidden="true">↗</span></button></footer>
     </div>
   </div>
+  <template id="reel-dialog-template">
+    <dialog class="reel-dialog" aria-labelledby="reel-title" aria-describedby="reel-description">
+      <h2 id="reel-title">Make Reel</h2>
+      <p id="reel-description">Save a separate vertical 1080 × 1920 MP4.</p>
+      <form>
+        <div class="reel-fields">
+          <label>Framing
+            <select name="framing" autofocus>
+              <option value="fit">Fit whole video with a blurred background</option>
+              <option value="crop">Fill screen with a center crop</option>
+            </select>
+          </label>
+          <label>Sound
+            <select name="sound">
+              <option value="rain">Gentle rain</option>
+              <option value="ocean">Ocean waves</option>
+              <option value="room">Quiet room</option>
+              <option value="none">Original sound only</option>
+            </select>
+          </label>
+        </div>
+        <p class="reel-note">The app adds sound for free on this PC.</p>
+        <p class="reel-status" role="status" hidden></p>
+        <div class="dialog-actions">
+          <button class="secondary-button" type="button" data-reel-close>Cancel</button>
+          <button class="primary-button" type="submit">Save Reel</button>
+        </div>
+      </form>
+    </dialog>
+  </template>
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
   <script src="app.js"></script>
 </body>
