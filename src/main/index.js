@@ -10,6 +10,8 @@ const { FREE_MODELS, FreeProvider, createVideoPlan } = require('../core/free-pro
 const { MODELS, PUBLIC_MODELS, MODEL_ALIASES } = require('../core/catalog');
 const { downloadVideo } = require('./download');
 const { createComposer } = require('./compose');
+const { createReel } = require('./reel');
+const { SOUND_PRESETS } = require('./sound');
 const { dictate } = require('./voice');
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'studio-media', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } }]);
@@ -22,6 +24,7 @@ function boot() {
   let voiceAvailable = process.platform === 'win32';
   let voiceReason = '';
   let dictating = false;
+  let exportingReel = false;
   let quitting = false;
   const rendererPath = path.join(__dirname, '..', 'renderer', 'index.html');
   const rendererUrl = pathToFileURL(rendererPath).href;
@@ -45,7 +48,12 @@ function boot() {
     const target = path.resolve(job.videoPath);
     const rel = path.relative(mediaDir, target);
     if (!rel || rel.startsWith('..') || path.isAbsolute(rel) || !fs.existsSync(target)) throw new Error('The saved video is missing.');
-    return target;
+    const canonical = fs.realpathSync(target);
+    const canonicalRelative = path.relative(fs.realpathSync(mediaDir), canonical);
+    if (!canonicalRelative || canonicalRelative.startsWith('..') || path.isAbsolute(canonicalRelative) || !fs.statSync(canonical).isFile()) {
+      throw new Error('The saved video is outside the library.');
+    }
+    return canonical;
   }
   function handle(name, callback) {
     ipcMain.handle('studio:' + name, async (event, input) => {
@@ -137,6 +145,29 @@ function boot() {
       const result = await dialog.showSaveDialog(window, { title: 'Export video', defaultPath: path.join(app.getPath('videos'), `AI-Video-${job.id.slice(0, 8)}${path.extname(target)}`), filters: [{ name: 'Video', extensions: [path.extname(target).slice(1)] }] });
       if (result.canceled) return { cancelled: true };
       await fs.promises.copyFile(target, result.filePath); return { saved: true };
+    });
+    handle('makeReel', async input => {
+      if (exportingReel) throw new Error('A Reel is already being saved.');
+      const { id, framing, sound } = input || {};
+      if (!['fit', 'crop'].includes(framing) || (sound !== 'none' && !Object.hasOwn(SOUND_PRESETS, sound))) {
+        throw new Error('Choose a framing and a sound for the Reel.');
+      }
+      const job = getJob(id), source = localVideo(job);
+      exportingReel = true;
+      try {
+        const result = await dialog.showSaveDialog(window, { title: 'Save vertical Reel',
+          defaultPath: path.join(app.getPath('videos'), `AI-Video-${job.id.slice(0, 8)}-Reel.mp4`),
+          filters: [{ name: 'MP4 video', extensions: ['mp4'] }] });
+        if (result.canceled || !result.filePath) return { cancelled: true };
+        if (path.extname(result.filePath).toLowerCase() !== '.mp4') throw new Error('Save the Reel with an .mp4 filename.');
+        const parent = await fs.promises.realpath(path.dirname(result.filePath));
+        const relative = path.relative(await fs.promises.realpath(mediaDir), parent);
+        if (!relative || (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith('..' + path.sep))) {
+          throw new Error('Choose a save folder outside the studio’s video library.');
+        }
+        await createReel({ source, destination: path.join(parent, path.basename(result.filePath)), framing, sound, overwrite: true });
+        return { saved: true };
+      } finally { exportingReel = false; }
     });
     handle('revealVideo', input => { shell.showItemInFolder(localVideo(getJob(input?.id))); });
     handle('dictate', async () => {

@@ -10,6 +10,7 @@
     sparkles: ['M12 3l2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5L12 3z', 'M20 2v4', 'M18 4h4'],
     layers: ['M12 3L2 8l10 5 10-5-10-5z', 'M2 12l10 5 10-5', 'M2 16l10 5 10-5'],
     film: ['M4 3h16v18H4z', 'M4 8h16', 'M4 16h16', 'M8 3v18', 'M16 3v18'],
+    reel: ['M7 3h10v18H7z', 'M10 17h4'],
     settings: ['M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z', 'M9 3h6l.6 3 2.4 1.4 2.9-.8 3 5.2-2.3 2 .1 2.7 2.2 2-3 5.2-2.9-.8-2.4 1.4-.6 3H9l-.6-3L6 21l-2.9.8-3-5.2 2.3-2-.1-2.7-2.2-2 3-5.2 2.9.8L8.4 4 9 3z'],
     cloud: ['M6 18a4 4 0 0 1-.4-8A6.5 6.5 0 0 1 18 8.5 4.8 4.8 0 0 1 18 18H6z'],
     key: ['M14 9a5 5 0 1 0-4 5l3 3h3v3h4v-4l-6-7z'],
@@ -158,6 +159,53 @@
     try { await callback(); await refresh(); }
     catch (error) { showToast(errorMessage(error), true); }
     finally { if (control) { busyControls.delete(control); control.disabled = false; } renderStatus(); }
+  }
+  function reelButton(job) {
+    const trigger = button('Make Reel', () => openReelDialog(job, trigger), 'reel', 'text-button video-reel-button');
+    return trigger;
+  }
+  function openReelDialog(job, trigger) {
+    const dialog = $('reel-dialog-template').content.firstElementChild.cloneNode(true);
+    const form = dialog.querySelector('form');
+    const controls = form.querySelectorAll('button, select');
+    const submit = form.querySelector('[type="submit"]');
+    const status = form.querySelector('[role="status"]');
+    let exporting = false;
+
+    form.querySelector('[data-reel-close]').addEventListener('click', () => dialog.close());
+    dialog.addEventListener('cancel', event => { if (exporting) event.preventDefault(); });
+    dialog.addEventListener('close', () => {
+      dialog.remove();
+      if (trigger.isConnected) trigger.focus();
+    });
+    form.addEventListener('submit', async event => {
+      event.preventDefault();
+      if (exporting) return;
+      const { framing, sound } = form.elements;
+      exporting = true;
+      controls.forEach(control => { control.disabled = true; });
+      status.hidden = false;
+      status.classList.remove('error');
+      status.textContent = 'Saving your Reel on this PC. This can take a moment.';
+      submit.textContent = 'Saving…';
+      try {
+        const result = await bridge.makeReel({ id: job.id, framing: framing.value, sound: sound.value });
+        if (result?.saved) {
+          dialog.close();
+          showToast('Reel saved.');
+        } else status.hidden = true;
+      } catch (error) {
+        status.classList.add('error');
+        status.textContent = errorMessage(error);
+      } finally {
+        exporting = false;
+        controls.forEach(control => { control.disabled = false; });
+        submit.textContent = 'Save Reel';
+        if (dialog.open) submit.focus();
+      }
+    });
+    document.body.append(dialog);
+    dialog.showModal();
   }
   function setView(next) {
     if (!['create', 'queue', 'library', 'settings'].includes(next)) return;
@@ -331,10 +379,12 @@
       if (job.cancellationError) body.append(element('p', 'job-error', job.cancellationError));
       if (job.cancellation === 'requested' && !job.cancellationError) body.append(element('p', 'job-error', 'Stop requested. Cancellation is not confirmed; the submitted request may still finish and use free GPU quota.'));
       if (job.status === 'completed' && job.videoPath) {
-        body.append(makeVideo(job), button('Export video', async () => {
+        const actions = element('div', 'chat-video-actions');
+        actions.append(reelButton(job), button('Export video', async () => {
           const result = await bridge.exportVideo({ id: job.id });
           if (result?.saved) showToast('Video exported.');
         }, 'download'));
+        body.append(makeVideo(job), actions);
       } else if (job.status === 'pending') body.append(isStory(job) && savedParts(job) > 0
         ? button('Continue video', () => continueJob(job), 'play')
         : button('Open queue', () => setView('queue'), 'arrow-right'));
@@ -385,7 +435,7 @@
       if (job.status === 'pending' && isStory(job) && savedParts(job) > 0) actions.append(button('Continue', () => continueJob(job), 'play'));
       if (['failed', 'cancelled', 'needs_attention'].includes(job.status)) actions.append(button(retryLabel(job), () => retryJob(job)));
       if (ACTIVE.has(job.status)) actions.append(button(job.status === 'pending' ? 'Remove' : 'Stop', async () => { await bridge.cancelJob({ id: job.id }); showToast(job.status === 'pending' ? 'Prompt removed from the active queue.' : 'Stop requested. Check the provider if this request was already submitted.'); }));
-      if (job.status === 'completed' && job.videoPath) actions.append(button('Export', async () => {
+      if (job.status === 'completed' && job.videoPath) actions.append(reelButton(job), button('Export', async () => {
         const result = await bridge.exportVideo({ id: job.id }); if (result?.saved) showToast('Video exported.');
       }, 'download'));
       row.append(mark, details, statusBadge(job), actions);
@@ -409,7 +459,7 @@
       const meta = element('div', 'job-meta'); meta.append(element('span', '', modelName(job.modelId)), element('span', '', timeLabel(job.createdAt)));
       meta.append(durationBadge(job));
       const footer = element('div', 'video-card-footer');
-      footer.append(button('Show in folder', () => bridge.revealVideo({ id: job.id }), 'folder'), button('Export video', async () => {
+      footer.append(reelButton(job), button('Show in folder', () => bridge.revealVideo({ id: job.id }), 'folder'), button('Export video', async () => {
         const result = await bridge.exportVideo({ id: job.id }); if (result?.saved) showToast('Video exported.');
       }, 'download'));
       body.append(prompt, meta);

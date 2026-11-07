@@ -43,6 +43,8 @@ jobs:
         run: npm run test:recovery
       - name: Verify local video playback
         run: npm run test:library
+      - name: Verify vertical Reel export with local sound
+        run: npm run test:reel
       - name: Verify offline voice transcription on a public sample
         run: npm run test:voice
       - name: Build per-user Windows installer
@@ -50,7 +52,7 @@ jobs:
       - name: Install and verify the packaged app
         shell: pwsh
         run: |
-          $installer = Get-ChildItem dist/*.exe | Select-Object -First 1
+          $installer = Get-ChildItem dist/AI-Video-Studio-Setup-*-x64.exe | Select-Object -First 1
           $setup = Start-Process -FilePath $installer.FullName -ArgumentList '/S' -WindowStyle Hidden -Wait -PassThru
           if ($setup.ExitCode -ne 0) { throw "Installer failed: $($setup.ExitCode)" }
           $appPath = Join-Path $env:LOCALAPPDATA 'Programs\AI Video Studio\AI Video Studio.exe'

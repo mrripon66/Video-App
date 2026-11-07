@@ -1,5 +1,11 @@
 # Validation record
 
+## Version 1.3 Reel export
+
+All 101 source tests passed on Windows. The Reel regression exercises the real FFmpeg crop and fit paths, stereo ambience, original sound and mixed sound. The desktop regression saves and cancels through the normal Reel dialog with a controlled file picker. It verifies a 1080 × 1920 H.264/AAC MP4, audible audio, the source file hash and zero provider requests.
+
+The user's rainy-kitchen clip was edited separately with shot-specific framing. Its delivery file decoded at 15.00 seconds, 1080 × 1920, 30 fps, with 48 kHz stereo AAC. The locally synthesized rain measured −14.0 LUFS integrated and −5.3 dB true peak after encoding. Representative frames across both shots and the pickup were inspected.
+
 Updated November 6, 2026 for version 1.2. A real anonymous 15-second two-shot film completed, and source, package, installed-upgrade and actual generated-video playback checks passed. GitHub publication remains a separate pending step.
 
 ## Current source checks

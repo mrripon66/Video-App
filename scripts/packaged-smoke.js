@@ -37,7 +37,8 @@ async function main() {
     await page.waitForFunction(async () => (await window.studio.snapshot()).voiceAvailable === true, undefined, { timeout: 20000 });
     const info = await application.evaluate(({ app }) => ({ packaged: app.isPackaged, version: app.getVersion(), dataPath: app.getPath('userData'), resources: process.resourcesPath }));
     assert.equal(info.packaged, true);
-    assert.equal(info.version, '1.2.0');
+    assert.equal(info.version, require('../package.json').version);
+    assert.equal(await page.evaluate(() => typeof window.studio.makeReel), 'function');
     assert.equal(await page.evaluate(() => typeof require), 'undefined');
     const state = await page.evaluate(() => window.studio.snapshot());
     assert.equal(state.paused, true);
