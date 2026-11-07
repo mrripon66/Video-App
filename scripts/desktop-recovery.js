@@ -80,8 +80,8 @@ async function main() {
     assert.equal(initial.stats.active, 3);
     assert.equal(await page.locator('#review-queue').isEnabled(), true, 'A saved remote request can be monitored without new pending prompts.');
     assert.match(await page.locator('#review-queue').innerText(), /Resume monitoring/);
-    assert.match(await page.locator('#batch-count').innerText(), /397 spaces available/, 'Attention-needed jobs count toward capacity.');
-    await page.locator('#batch-input').fill(Array.from({ length: 398 }, (_, i) => `Boundary verification prompt ${i + 1}`).join('\n'));
+    assert.match(await page.locator('#batch-count').innerText(), /497 spaces available/, 'Attention-needed jobs count toward capacity.');
+    await page.locator('#batch-input').fill(Array.from({ length: 498 }, (_, i) => `Boundary verification prompt ${i + 1}`).join('\n'));
     assert.equal(await page.locator('#add-batch').isDisabled(), true, 'The renderer prevents a batch that would exceed capacity including attention jobs.');
     await page.locator('#batch-input').fill('');
     const partialStory = page.locator('#queue-list [data-progress-job="recovery-story-partial"]');
@@ -111,7 +111,7 @@ async function main() {
     assert.equal(await page.locator('video').count(), 0, 'A progress fixture never becomes a fabricated video.');
     await attention.getByRole('button', { name: /^(?:Remove|Stop)$/ }).click();
     await page.waitForFunction(async () => (await window.studio.snapshot()).jobs.find(job => job.id === 'recovery-attention-job')?.status === 'cancelled');
-    await page.waitForFunction(() => document.getElementById('batch-count').textContent.includes('398 spaces available'));
+    await page.waitForFunction(() => document.getElementById('batch-count').textContent.includes('498 spaces available'));
     const afterRemoval = await application.evaluate(() => global.__recoveryNetwork);
     assert.equal(afterRemoval.submissions, 0);
     assert.equal(afterRemoval.forbidden, 0, 'Removing an attention item without a request handle uses no provider request.');

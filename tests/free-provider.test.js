@@ -90,7 +90,27 @@ test('quota errors stop the queue and do not request a paid or alternate endpoin
   } });
   const result = await provider.poll(remote());
   assert.equal(result.status, 'failed'); assert.equal(result.pauseQueue, true); assert.match(result.error, /quota/);
+  assert.equal(result.quotaBlocked, true);
+  assert.equal(result.retryAfterMs, 86_340_000);
   assert.equal(calls, 1);
+});
+
+test('only a confirmed terminal GPU quota error is eligible for automatic resubmission', async () => {
+  for (const message of [null, 'Failed while checking GPU quota', 'The provider crashed. Try again in 00:02:00']) {
+    const provider = new FreeProvider({ fetchImpl: async () => events(`event: error\ndata: ${JSON.stringify(message)}\n\n`) });
+    const result = await provider.poll(remote());
+    assert.equal(result.status, 'failed');
+    assert.notEqual(result.quotaBlocked, true);
+    assert.equal(result.retryAfterMs, undefined);
+  }
+});
+
+test('a rejected POST preserves Retry-After without treating an accepted poll as a rejection', async () => {
+  let calls = 0;
+  const limited = () => new Response('Too many requests', { status: 429, headers: { 'Retry-After': '120' } });
+  const provider = new FreeProvider({ fetchImpl: async () => ++calls === 1 ? json(schema()) : limited() });
+  await assert.rejects(provider.submit('ltx-free', 'A lake'), error => error.httpStatus === 429 && error.submissionUncertain === false && error.retryAfterMs === 120_000);
+  await assert.rejects(provider.poll(remote()), error => error.httpStatus === 429 && error.submissionUncertain === undefined && error.retryAfterMs === 120_000);
 });
 
 test('HTTP quota or service errors pause instead of retrying submissions', async () => {

@@ -53,7 +53,7 @@ async function main() {
     await page.locator('#chat-feed').getByRole('button', { name: 'Make Reel', exact: true }).click();
     const reel = page.getByRole('dialog', { name: 'Make Reel' });
     assert.equal(await reel.getByLabel('Framing').inputValue(), 'fit');
-    assert.equal(await reel.getByLabel('Sound').inputValue(), 'rain');
+    assert.equal(await reel.locator('select[name="sound"]').inputValue(), 'rain');
     await reel.getByRole('button', { name: 'Save Reel' }).click();
     await page.waitForFunction(() => document.querySelector('.reel-dialog [type="submit"]')?.disabled === false);
     assert.equal(await reel.isVisible(), true, 'Cancelling the file picker keeps the Reel options open.');
@@ -67,6 +67,9 @@ async function main() {
     await reel.getByRole('button', { name: 'Save Reel' }).click();
     await reel.waitFor({ state: 'detached', timeout: 60000 });
     assert.equal(await page.locator('#toast').innerText(), 'Reel saved.');
+    const savedReel = await page.evaluate(async () => (await window.studio.snapshot()).jobs.find(job => job.kind === 'reel'));
+    assert.equal(savedReel?.sourceJobId, jobId, 'The exported Reel appears in the app library.');
+    assert.ok(fs.readFileSync(savedReel.videoPath).equals(fs.readFileSync(exportPath)), 'The playable library copy matches the export.');
 
     const dialogs = await application.evaluate(() => global.__reelSaveDialogs);
     assert.equal(dialogs.length, 2);

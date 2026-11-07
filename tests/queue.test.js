@@ -13,6 +13,22 @@ const remote = { requestId: 'provider-request', statusUrl: 'https://queue.fal.ru
 const ready = { status: 'completed', videoUrl: 'https://v3.fal.media/files/test/video.mp4' };
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 
+function fakeClock() {
+  let time = 1_000_000, next = 0;
+  const timers = new Map();
+  return {
+    now: () => time,
+    setTimeout(callback, delay) { const id = ++next; timers.set(id, { at: time + delay, callback }); return id; },
+    clearTimeout(id) { timers.delete(id); },
+    advance(delay) {
+      time += delay;
+      for (const [id, timer] of [...timers]) {
+        if (timer.at <= time && timers.delete(id)) timer.callback();
+      }
+    },
+  };
+}
+
 function fixture(t, overrides = {}) {
   fs.mkdirSync(testRoot, { recursive: true });
   const dir = fs.mkdtempSync(path.join(testRoot, 'studio-queue-'));
@@ -37,13 +53,13 @@ function fixture(t, overrides = {}) {
 
 const approve = queue => queue.start({ approvedJobIds: queue.snapshot().jobs.filter(job => job.status === 'pending').map(job => job.id) });
 
-test('400-prompt import is atomic, persistent, paused and capped independently of history', async t => {
+test('500-prompt import is atomic, persistent, paused and capped independently of history', async t => {
   const { queue, calls, store } = fixture(t);
-  queue.addPrompts(Array.from({ length: 400 }, (_, i) => `Prompt ${i + 1}`), 'wan');
-  assert.equal(queue.snapshot().stats.active, 400);
+  queue.addPrompts(Array.from({ length: 500 }, (_, i) => `Prompt ${i + 1}`), 'wan');
+  assert.equal(queue.snapshot().stats.active, 500);
   assert.equal(queue.snapshot().paused, true);
-  assert.throws(() => queue.addPrompts(['Overflow'], 'wan'), /400/);
-  assert.equal(store.snapshot().jobs.length, 400);
+  assert.throws(() => queue.addPrompts(['Overflow'], 'wan'), /500/);
+  assert.equal(store.snapshot().jobs.length, 500);
   const before = store.snapshot().revision;
   assert.throws(() => queue.addPrompts(['Valid', '  '], 'wan'), /Every/);
   assert.equal(store.snapshot().revision, before);
@@ -51,8 +67,8 @@ test('400-prompt import is atomic, persistent, paused and capped independently o
   assert.equal(calls.submit, 0);
   await queue.cancel(queue.snapshot().jobs[0].id);
   queue.addPrompts(['Replacement'], 'wan');
-  assert.equal(queue.snapshot().stats.active, 400);
-  assert.equal(queue.snapshot().stats.total, 401);
+  assert.equal(queue.snapshot().stats.active, 500);
+  assert.equal(queue.snapshot().stats.total, 501);
 });
 
 test('explicit selected IDs gate network calls and later additions are never included automatically', async t => {
@@ -799,4 +815,151 @@ test('long-video provider construction carries the story preset context without 
     { modelId: 'ltx2-free', context: { purpose: 'story' } },
   ]);
   assert.deepEqual(result.queue.snapshot().jobs.map(job => job.status), ['completed', 'completed']);
+});
+
+test('an authorized automatic batch waits for Retry-After, reopens and finishes only selected prompts', async t => {
+  const clock = fakeClock();
+  const submitted = [];
+  const { queue, dir, provider } = fixture(t, { retryClock: clock, provider: { async submit(_modelId, prompt) {
+    submitted.push(prompt);
+    if (submitted.length === 1) throw Object.assign(new Error('Rate limited'), { httpStatus: 429, submissionUncertain: false, retryAfterMs: 120_000 });
+    return remote;
+  } } });
+  const [first, second, other] = queue.addPrompts(['First', 'Second', 'Unselected'], 'wan');
+  queue.start({ approvedJobIds: [first.id, second.id], automatic: true });
+  await queue.waitForIdle();
+  const retryAt = clock.now() + 120_000;
+  assert.equal(queue.snapshot().nextRetryAt, retryAt);
+  assert.equal(queue.snapshot().jobs[0].phase, 'waiting_quota');
+  assert.equal(queue.snapshot().paused, true);
+  assert.deepEqual(submitted, ['First']);
+  await queue.dispose({ preserveAutomatic: true });
+
+  const store = new Store(dir);
+  store.load();
+  const reopened = new Queue({ store, models, retryClock: clock, providerFactory: () => provider,
+    download: async () => 'C:\\videos\\saved.mp4', pollIntervalMs: 0 });
+  t.after(() => reopened.dispose());
+  assert.equal(reopened.recover().nextRetryAt, retryAt);
+  clock.advance(119_999);
+  await reopened.waitForIdle();
+  assert.deepEqual(submitted, ['First']);
+  clock.advance(1);
+  await reopened.waitForIdle();
+  assert.deepEqual(submitted, ['First', 'First', 'Second']);
+  assert.equal(reopened.snapshot().automaticBatch, null);
+  assert.deepEqual(reopened.snapshot().jobs.map(job => [job.id, job.status]), [[first.id, 'completed'], [second.id, 'completed'], [other.id, 'pending']]);
+});
+
+test('a terminal GPU quota error preserves saved shots and retries only the remaining shot', async t => {
+  const clock = fakeClock();
+  const submitted = [], polled = [], downloaded = [];
+  const { queue } = storyFixture(t, { retryClock: clock, provider: {
+    async submit(_modelId, prompt) { submitted.push(prompt); return { requestId: `shot-${submitted.length}` }; },
+    async poll(saved) {
+      polled.push(saved.requestId);
+      return saved.requestId === 'shot-2' ? { status: 'failed', error: 'GPU quota exhausted', quotaBlocked: true } : ready;
+    },
+  }, download: async (_url, id) => { downloaded.push(id); return `C:\\videos\\${id}.mp4`; } });
+  const [job] = queue.addPrompts(['Whale story'], 'ltx2-story-free');
+  queue.start({ approvedJobIds: [job.id], automatic: true });
+  await queue.waitForIdle();
+  assert.equal(queue.snapshot().nextRetryAt, clock.now() + 86_400_000);
+  const saved = queue.snapshot().jobs[0];
+  assert.equal(saved.segments[0].status, 'completed');
+  assert.equal(saved.segments[1].status, 'pending');
+  assert.equal(saved.segments[1].remote, undefined);
+  clock.advance(86_400_000);
+  await queue.waitForIdle();
+  assert.deepEqual(submitted, [storyPlan().segments[0].prompt, storyPlan().segments[1].prompt, storyPlan().segments[1].prompt]);
+  assert.deepEqual(polled, ['shot-1', 'shot-2', 'shot-3']);
+  assert.equal(downloaded.length, 2);
+  assert.equal(queue.snapshot().jobs[0].status, 'completed');
+  assert.equal(queue.snapshot().automaticBatch, null);
+});
+
+test('reopening a batch monitors the accepted shot before generating the remaining shot', async t => {
+  const submitted = [], polled = [];
+  const { queue, store } = storyFixture(t, { provider: {
+    async submit(_modelId, prompt) { submitted.push(prompt); return { requestId: 'new-shot' }; },
+    async poll(saved) { polled.push(saved.requestId); return ready; },
+  } });
+  const [job] = queue.addPrompts(['Whale story'], 'ltx2-story-free');
+  store.mutate(state => {
+    state.settings.automaticBatch = { jobIds: [job.id], retryAt: null };
+    const item = state.jobs[0];
+    item.status = 'queued';
+    item.remote = { requestId: 'already-accepted' };
+    item.segments[0].status = 'queued';
+    item.segments[0].remote = item.remote;
+  });
+  queue.recover();
+  await queue.waitForIdle();
+  assert.deepEqual(polled, ['already-accepted', 'new-shot']);
+  assert.deepEqual(submitted, [storyPlan().segments[1].prompt]);
+  assert.equal(queue.snapshot().jobs[0].status, 'completed');
+});
+
+test('an ambiguous submission or failed poll clears automatic authorization without resubmission', async t => {
+  for (const accepted of [false, true]) {
+    const clock = fakeClock();
+    let submits = 0;
+    const { queue } = fixture(t, { retryClock: clock, provider: {
+      async submit() { submits++; if (!accepted) throw new Error('Connection interrupted'); return remote; },
+      async poll() { throw Object.assign(new Error('Monitoring was rate limited'), { httpStatus: 429, pauseQueue: true, retryAfterMs: 60_000 }); },
+    } });
+    const jobs = queue.addPrompts(['First', 'Second'], 'wan');
+    queue.start({ approvedJobIds: jobs.map(job => job.id), automatic: true });
+    await queue.waitForIdle();
+    assert.equal(queue.snapshot().automaticBatch, null);
+    assert.equal(queue.snapshot().jobs[0].status, 'needs_attention');
+    assert.equal(queue.snapshot().jobs[0].remote?.requestId, accepted ? remote.requestId : undefined);
+    clock.advance(86_400_000);
+    await queue.waitForIdle();
+    assert.equal(submits, 1);
+    assert.equal(queue.snapshot().jobs[1].status, 'pending');
+  }
+});
+
+test('manual pause cancels a pending automatic quota retry', async t => {
+  const clock = fakeClock();
+  let submits = 0;
+  const { queue } = fixture(t, { retryClock: clock, provider: { async submit() {
+    submits++;
+    throw Object.assign(new Error('Rate limited'), { httpStatus: 429, retryAfterMs: 60_000 });
+  } } });
+  const [job] = queue.addPrompts(['A lake'], 'wan');
+  queue.start({ approvedJobIds: [job.id], automatic: true });
+  await queue.waitForIdle();
+  assert.ok(queue.snapshot().nextRetryAt);
+  queue.pause();
+  clock.advance(60_000);
+  await queue.waitForIdle();
+  assert.equal(submits, 1);
+  assert.equal(queue.snapshot().nextRetryAt, null);
+  assert.equal(queue.snapshot().automaticBatch, null);
+});
+
+test('production audio is prepared before the first submission and saved only after success', async t => {
+  const sequence = [];
+  const { queue } = storyFixture(t, {
+    planVideo: () => ({ ...storyPlan(), production: { narration: 'The rain comes softly.' } }),
+    prepareVideo: async () => { sequence.push('prepare'); if (sequence.length === 1) throw new Error('Narration could not fit.'); },
+    provider: { async submit() {
+      assert.equal(queue.snapshot().jobs[0].prepared, true);
+      sequence.push('submit');
+      return remote;
+    } },
+  });
+  const [job] = queue.addPrompts(['A rainy story'], 'ltx2-story-free');
+  approve(queue);
+  await queue.waitForIdle();
+  assert.deepEqual(sequence, ['prepare']);
+  assert.equal(queue.snapshot().jobs[0].phase, 'prepare_failed');
+  assert.equal(queue.snapshot().jobs[0].prepared, undefined);
+  queue.retry(job.id);
+  approve(queue);
+  await queue.waitForIdle();
+  assert.deepEqual(sequence, ['prepare', 'prepare', 'submit', 'submit']);
+  assert.equal(queue.snapshot().jobs[0].status, 'completed');
 });

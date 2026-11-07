@@ -4,14 +4,18 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { Readable } = require('node:stream');
+const { randomUUID } = require('node:crypto');
 const { Store } = require('../core/store');
 const { Queue } = require('../core/queue');
-const { FREE_MODELS, FreeProvider, createVideoPlan } = require('../core/free-provider');
+const { FREE_MODELS, FreeProvider } = require('../core/free-provider');
 const { MODELS, PUBLIC_MODELS, MODEL_ALIASES } = require('../core/catalog');
 const { downloadVideo } = require('./download');
 const { createComposer } = require('./compose');
 const { createReel } = require('./reel');
 const { SOUND_PRESETS } = require('./sound');
+const { narrationAvailable, NARRATION_VOICES } = require('./narration');
+const { promptSoundAvailable } = require('./prompt-sound');
+const { createProduction, planStudioVideo } = require('./production');
 const { dictate } = require('./voice');
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'studio-media', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } }]);
@@ -32,10 +36,10 @@ function boot() {
     if (window && !window.isDestroyed()) window.webContents.send('studio:changed');
   }
   function snapshot() {
-    return { ...queue.snapshot(), models: PUBLIC_MODELS, modelAliases: MODEL_ALIASES, settings: store.snapshot().settings, ready: true, freeOnly: true,
+    return { ...queue.snapshot(), models: PUBLIC_MODELS, modelAliases: { ...MODEL_ALIASES, 'local-reel': 'Reel' }, ready: true, freeOnly: true,
       provider: { name: 'Hugging Face ZeroGPU', description: 'Free shared GPU access with daily quotas and waiting queues.',
         docsUrl: 'https://huggingface.co/docs/hub/spaces-zerogpu' },
-      credentials: { fal: false }, voiceAvailable, voiceReason };
+      credentials: { fal: false }, voiceAvailable, voiceReason, narrationAvailable: narrationAvailable(), promptSoundAvailable: promptSoundAvailable() };
   }
   function getJob(id) {
     if (typeof id !== 'string') throw new Error('Choose a video first.');
@@ -72,7 +76,6 @@ function boot() {
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     window.webContents.on('will-navigate', event => event.preventDefault());
     window.webContents.on('will-attach-webview', event => event.preventDefault());
-    window.on('close', () => { queue?.pause(); });
     window.on('closed', () => { window = null; });
     window.loadFile(rendererPath);
   }
@@ -84,11 +87,13 @@ function boot() {
     fs.mkdirSync(mediaDir, { recursive: true });
     store = new Store(dataDir);
     store.load();
+    const production = createProduction({ directory: mediaDir, compose: createComposer({ directory: mediaDir }) });
     queue = new Queue({ store, models: MODELS, providerFactory: (model, context) => {
       if (model.provider !== 'huggingface' || !FREE_MODELS.some(entry => entry.id === model.id)) throw new Error('This application permits only the configured free provider.');
       return new FreeProvider({ videoPreset: context?.purpose === 'story' ? 'film' : 'detail' });
     },
-      planVideo: createVideoPlan, composeVideo: createComposer({ directory: mediaDir }),
+      planVideo: planStudioVideo, prepareVideo: production.prepareVideo,
+      composeVideo: input => production.finishVideo(getJob(input.jobId), input),
       download: (url, id) => downloadVideo(url, id, mediaDir), onChange: changed, pollIntervalMs: 4000 });
     queue.recover();
     session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
@@ -96,10 +101,11 @@ function boot() {
     protocol.handle('studio-media', async request => {
       try {
         const url = new URL(request.url);
-        if (url.hostname !== 'video' || request.method !== 'GET') return new Response(null, { status: 403 });
+        if (url.hostname !== 'video' || !['GET', 'HEAD'].includes(request.method)) return new Response(null, { status: 403 });
         const id = decodeURIComponent(url.pathname.slice(1));
         const target = localVideo(getJob(id));
         const size = fs.statSync(target).size;
+        if (!size) return new Response(null, { status: 404 });
         let start = 0, end = size - 1, status = 200;
         const range = request.headers.get('range');
         if (range) {
@@ -110,8 +116,9 @@ function boot() {
           if (start > end || start >= size) return new Response(null, { status: 416, headers: { 'Content-Range': `bytes */${size}` } });
           status = 206;
         }
-        const headers = { 'Content-Type': target.endsWith('.webm') ? 'video/webm' : 'video/mp4', 'Content-Length': String(end - start + 1), 'Accept-Ranges': 'bytes' };
+        const headers = { 'Content-Type': /\.webm$/i.test(target) ? 'video/webm' : 'video/mp4', 'Content-Length': String(end - start + 1), 'Accept-Ranges': 'bytes' };
         if (status === 206) headers['Content-Range'] = `bytes ${start}-${end}/${size}`;
+        if (request.method === 'HEAD') return new Response(null, { status, headers });
         return new Response(Readable.toWeb(fs.createReadStream(target, { start, end })), { status, headers });
       } catch { return new Response('Video unavailable', { status: 404 }); }
     });
@@ -148,10 +155,13 @@ function boot() {
     });
     handle('makeReel', async input => {
       if (exportingReel) throw new Error('A Reel is already being saved.');
-      const { id, framing, sound } = input || {};
-      if (!['fit', 'crop'].includes(framing) || (sound !== 'none' && !Object.hasOwn(SOUND_PRESETS, sound))) {
+      const { id, framing, sound, soundPrompt = '', narration = '', voice = 'warm' } = input || {};
+      if (!['fit', 'crop'].includes(framing) || (sound !== 'none' && sound !== 'prompt' && !Object.hasOwn(SOUND_PRESETS, sound))) {
         throw new Error('Choose a framing and a sound for the Reel.');
       }
+      if (typeof narration !== 'string' || narration.length > 700 || !Object.hasOwn(NARRATION_VOICES, voice)) throw new Error('Enter a short script and choose a voice.');
+      if (narration.trim() && !narrationAvailable()) throw new Error('The offline narration engine is unavailable.');
+      if (sound === 'prompt' && (typeof soundPrompt !== 'string' || !soundPrompt.trim() || soundPrompt.length > 500 || !promptSoundAvailable())) throw new Error('Set up the local sound model and enter a short sound description.');
       const job = getJob(id), source = localVideo(job);
       exportingReel = true;
       try {
@@ -165,7 +175,21 @@ function boot() {
         if (!relative || (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith('..' + path.sep))) {
           throw new Error('Choose a save folder outside the studio’s video library.');
         }
-        await createReel({ source, destination: path.join(parent, path.basename(result.filePath)), framing, sound, overwrite: true });
+        const destination = path.join(parent, path.basename(result.filePath));
+        await createReel({ source, destination, framing, sound, soundPrompt, narration: narration.trim(), voice, overwrite: true });
+        const reelId = randomUUID();
+        const videoPath = path.join(mediaDir, reelId + '.mp4');
+        const timestamp = new Date().toISOString();
+        await fs.promises.copyFile(destination, videoPath, fs.constants.COPYFILE_EXCL);
+        try {
+          store.mutate(state => state.jobs.push({ id: reelId, modelId: 'local-reel', kind: 'reel', sourceJobId: job.id,
+            title: path.basename(destination, '.mp4'), prompt: job.prompt, status: 'completed', videoPath,
+            createdAt: timestamp, completedAt: timestamp, attempts: [] }));
+        } catch (error) {
+          await fs.promises.unlink(videoPath).catch(() => {});
+          throw new Error('The Reel file was saved, but the app could not add it to the library.', { cause: error });
+        }
+        changed();
         return { saved: true };
       } finally { exportingReel = false; }
     });
@@ -182,6 +206,6 @@ function boot() {
     app.quit();
   });
   app.on('second-instance', () => { if (window) { if (window.isMinimized()) window.restore(); window.focus(); } });
-  app.on('window-all-closed', () => { quitting = true; queue?.dispose(); app.quit(); });
-  app.on('before-quit', () => { quitting = true; queue?.pause(); });
+  app.on('window-all-closed', () => { quitting = true; queue?.dispose({ preserveAutomatic: true }); app.quit(); });
+  app.on('before-quit', () => { if (!quitting) queue?.dispose({ preserveAutomatic: true }); quitting = true; });
 }

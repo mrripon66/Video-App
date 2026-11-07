@@ -5,6 +5,7 @@
   const bridge = window.studio;
   const ACTIVE = new Set(['pending', 'submitting', 'queued', 'running', 'needs_attention']);
   const IN_PROGRESS = new Set(['submitting', 'queued', 'running']);
+  const BATCH_LIMIT = 500;
   const labels = { pending: 'Waiting', submitting: 'Submitting', queued: 'At provider', running: 'Generating', completed: 'Completed', failed: 'Failed', cancelled: 'Cancelled', needs_attention: 'Needs attention' };
   const icons = {
     sparkles: ['M12 3l2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5L12 3z', 'M20 2v4', 'M18 4h4'],
@@ -75,7 +76,7 @@
     node.addEventListener('click', () => action(callback, node));
     return node;
   }
-  function modelName(id) { return state.models.find(model => model.id === id)?.name || state.modelAliases?.[id] || id || 'Video model'; }
+  function modelName(id) { return state.models.find(model => model.id === id)?.name || state.modelAliases?.[id] || (id === 'local-reel' ? 'Reel' : id) || 'Video model'; }
   function isStory(job) { return job.modelId === 'ltx2-story-free' || (job.videoPlan?.segments?.length || 0) > 1; }
   function storyParts(job) { return Array.isArray(job.segments) ? job.segments : Array.isArray(job.videoPlan?.segments) ? job.videoPlan.segments : []; }
   function savedParts(job) { return storyParts(job).filter(part => part.videoPath).length; }
@@ -167,10 +168,15 @@
   function openReelDialog(job, trigger) {
     const dialog = $('reel-dialog-template').content.firstElementChild.cloneNode(true);
     const form = dialog.querySelector('form');
-    const controls = form.querySelectorAll('button, select');
+    const controls = form.querySelectorAll('button, select, textarea');
     const submit = form.querySelector('[type="submit"]');
     const status = form.querySelector('[role="status"]');
     let exporting = false;
+    const soundDescription = form.querySelector('[data-sound-description]');
+    const soundSelect = form.elements.sound;
+    soundSelect.querySelector('[value="prompt"]').disabled = !state.promptSoundAvailable;
+    form.querySelector('[data-narration-fields]').hidden = !state.narrationAvailable;
+    soundSelect.addEventListener('change', () => { soundDescription.hidden = soundSelect.value !== 'prompt'; });
 
     form.querySelector('[data-reel-close]').addEventListener('click', () => dialog.close());
     dialog.addEventListener('cancel', event => { if (exporting) event.preventDefault(); });
@@ -181,7 +187,7 @@
     form.addEventListener('submit', async event => {
       event.preventDefault();
       if (exporting) return;
-      const { framing, sound } = form.elements;
+      const { framing, sound, soundPrompt, narration, voice } = form.elements;
       exporting = true;
       controls.forEach(control => { control.disabled = true; });
       status.hidden = false;
@@ -189,7 +195,8 @@
       status.textContent = 'Saving your Reel on this PC. This can take a moment.';
       submit.textContent = 'Saving…';
       try {
-        const result = await bridge.makeReel({ id: job.id, framing: framing.value, sound: sound.value });
+        const result = await bridge.makeReel({ id: job.id, framing: framing.value, sound: sound.value,
+          soundPrompt: soundPrompt.value.trim(), narration: narration.value.trim(), voice: voice.value });
         if (result?.saved) {
           dialog.close();
           showToast('Reel saved.');
@@ -209,6 +216,7 @@
   }
   function setView(next) {
     if (!['create', 'queue', 'library', 'settings'].includes(next)) return;
+    if (next !== view) document.querySelectorAll('.view video').forEach(video => video.pause());
     view = next;
     document.querySelectorAll('.view').forEach(node => { node.hidden = node.id !== 'view-' + next; });
     document.querySelectorAll('.nav-item').forEach(node => {
@@ -237,10 +245,17 @@
   function makeVideo(job) {
     const video = element('video');
     video.controls = true;
+    video.playsInline = true;
     video.preload = 'metadata';
     video.src = 'studio-media://video/' + encodeURIComponent(job.id);
-    video.setAttribute('aria-label', job.prompt);
-    video.addEventListener('loadedmetadata', () => recordDuration(job, video.duration));
+    video.setAttribute('aria-label', job.title || job.prompt);
+    video.addEventListener('play', () => {
+      document.querySelectorAll('video').forEach(other => { if (other !== video) other.pause(); });
+    });
+    video.addEventListener('loadedmetadata', () => {
+      recordDuration(job, video.duration);
+      if (video.nextElementSibling?.classList.contains('video-load-error')) video.nextElementSibling.remove();
+    });
     video.addEventListener('error', () => {
       const existing = video.parentElement?.querySelector('.video-load-error');
       if (!existing && video.parentElement) {
@@ -249,6 +264,66 @@
       }
     });
     return video;
+  }
+  function watchButton(job) {
+    const trigger = button('Watch', () => openVideo(job, trigger), 'play', 'text-button video-watch-button');
+    return trigger;
+  }
+  function openVideo(job, trigger) {
+    const dialog = element('dialog', 'watch-dialog');
+    dialog.setAttribute('aria-labelledby', 'watch-title');
+    const title = element('h2', '', job.title || 'Watch video');
+    title.id = 'watch-title';
+    const header = element('div', 'watch-header');
+    const close = element('button', 'secondary-button', 'Close');
+    close.type = 'button';
+    close.addEventListener('click', () => dialog.close());
+    header.append(title, close);
+    const video = makeVideo(job);
+    const message = element('p', 'watch-status');
+    message.setAttribute('role', 'status');
+    message.hidden = true;
+    const controls = element('div', 'watch-controls');
+    const play = element('button', 'primary-button', 'Play');
+    const replay = element('button', 'secondary-button', 'Replay');
+    const sound = element('button', 'secondary-button watch-sound-button', 'Mute');
+    for (const control of [play, replay, sound]) control.type = 'button';
+    function updateControls() {
+      play.textContent = video.paused ? 'Play' : 'Pause';
+      sound.textContent = video.muted || video.volume === 0 ? 'Unmute' : 'Mute';
+    }
+    async function start(restart = false) {
+      message.hidden = true;
+      try {
+        if (video.error) video.load();
+        if (restart || video.ended) video.currentTime = 0;
+        await video.play();
+      } catch (error) {
+        if (!dialog.open || error?.name === 'AbortError') return;
+        message.textContent = video.error ? 'The saved video could not be played. Choose Replay to load it again.' : 'Select Play to start the video.';
+        message.hidden = false;
+      }
+    }
+    play.addEventListener('click', () => { if (video.paused) void start(); else video.pause(); });
+    replay.addEventListener('click', () => { void start(true); });
+    sound.addEventListener('click', () => {
+      const wasSilent = video.muted || video.volume === 0;
+      video.muted = !wasSilent;
+      if (wasSilent && video.volume === 0) video.volume = 1;
+    });
+    for (const event of ['play', 'pause', 'ended', 'volumechange']) video.addEventListener(event, updateControls);
+    controls.append(play, replay, sound);
+    dialog.append(header, video, controls, message);
+    dialog.addEventListener('close', () => {
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+      dialog.remove();
+      if (trigger.isConnected) trigger.focus();
+    });
+    document.body.append(dialog);
+    dialog.showModal();
+    void start();
   }
   function renderModels() {
     const signature = JSON.stringify(state.models);
@@ -289,10 +364,11 @@
     $('nav-library-count').textContent = String(completed.length);
     $('stat-pending').textContent = String(pending.length);
     $('stat-active').textContent = String(active.length);
-    $('stat-completed').textContent = String(completed.length);
+    $('stat-completed').textContent = String(completed.filter(job => job.kind !== 'reel').length);
     $('stat-failed').textContent = String(failed.length);
-    $('queue-total').textContent = String(state.jobs.length);
-    $('queue-state').textContent = state.paused ? 'New submissions paused' : 'Generating selected prompts';
+    $('queue-total').textContent = String(state.jobs.filter(job => job.kind !== 'reel').length);
+    const quotaWait = Number.isFinite(state.nextRetryAt) ? `Free allowance retry ${new Date(state.nextRetryAt).toLocaleString()}` : '';
+    $('queue-state').textContent = quotaWait || (state.paused ? 'New submissions paused' : state.automaticBatch ? 'Automatic batch running' : 'Generating selected prompts');
     $('library-count').textContent = completed.length + (completed.length === 1 ? ' video' : ' videos');
     const freeReady = state.ready === true && state.freeOnly === true;
     $('connection-banner').hidden = view === 'settings';
@@ -301,19 +377,21 @@
     $('provider-description').textContent = state.provider?.description || 'Free shared GPUs with daily quotas and queues.';
     $('provider-state').textContent = freeReady ? 'Free mode enabled' : 'Unavailable';
     $('provider-state').className = 'status-badge' + (freeReady ? ' completed' : '');
-    $('review-queue').disabled = availablePending.length === 0 && !monitoringOnly;
+    $('review-queue').disabled = !!state.automaticBatch || (availablePending.length === 0 && !monitoringOnly);
     $('review-queue').replaceChildren(icon('play'), document.createTextNode(monitoringOnly ? 'Resume monitoring' : 'Start queue'));
-    $('pause-queue').disabled = Boolean(state.paused);
+    $('pause-queue').disabled = Boolean(state.paused && !state.automaticBatch);
     const selected = state.models.find(model => model.id === $('create-model').value);
     $('create-model-details').textContent = selected?.available ? selected.description || '' : selected?.reason || '';
     $('story-duration-hint').hidden = selected?.id !== 'ltx2-story-free';
     $('animatediff-duration-hint').hidden = selected?.id !== 'animatediff-free';
-    $('add-prompt').disabled = !selected?.available || count >= 400;
+    $('add-prompt').disabled = !selected?.available || count >= BATCH_LIMIT || !!state.automaticBatch;
     const batchSelected = state.models.find(model => model.id === $('batch-model').value);
     const lines = batchPrompts();
-    $('add-batch').disabled = !batchSelected?.available || lines.length === 0 || lines.length + count > 400;
-    $('batch-count').textContent = lines.length + (lines.length === 1 ? ' prompt' : ' prompts') + ' · ' + Math.max(0, 400 - count) + ' spaces available';
-    $('batch-count').classList.toggle('over-limit', lines.length + count > 400);
+    $('add-batch').disabled = !batchSelected?.available || lines.length === 0 || lines.length + count > BATCH_LIMIT || !!state.automaticBatch;
+    $('batch-count').textContent = lines.length + (lines.length === 1 ? ' prompt' : ' prompts') + ' · ' + Math.max(0, BATCH_LIMIT - count) + ' spaces available';
+    $('batch-count').classList.toggle('over-limit', lines.length + count > BATCH_LIMIT);
+    $('narration-state').textContent = state.narrationAvailable ? 'English narration ready' : 'Narration needs the full installer';
+    $('prompt-sound-state').textContent = state.promptSoundAvailable ? 'Sound from descriptions is ready' : 'Sound from descriptions needs the local add-on';
     $('voice-button').disabled = dictating || state.voiceAvailable === false;
     $('voice-button').title = state.voiceAvailable === false ? state.voiceReason || 'Local voice input is unavailable. Type your prompt instead.' : 'Record a short voice prompt and transcribe it locally';
     $('voice-description').textContent = state.voiceAvailable === false
@@ -340,6 +418,7 @@
     return node;
   }
   function jobDescription(job) {
+    if (job.phase === 'preparing') return 'Preparing narration and sound on this PC.';
     if (isStory(job)) {
       if (job.status === 'completed') return 'Your edited video is ready and saved on this PC. It joins two separately generated AI shots.';
       if (job.phase === 'composing') return 'Both AI shots are downloaded. Joining them into your final edited video.';
@@ -380,7 +459,7 @@
       if (job.cancellation === 'requested' && !job.cancellationError) body.append(element('p', 'job-error', 'Stop requested. Cancellation is not confirmed; the submitted request may still finish and use free GPU quota.'));
       if (job.status === 'completed' && job.videoPath) {
         const actions = element('div', 'chat-video-actions');
-        actions.append(reelButton(job), button('Export video', async () => {
+        actions.append(watchButton(job), reelButton(job), button('Export video', async () => {
           const result = await bridge.exportVideo({ id: job.id });
           if (result?.saved) showToast('Video exported.');
         }, 'download'));
@@ -435,7 +514,7 @@
       if (job.status === 'pending' && isStory(job) && savedParts(job) > 0) actions.append(button('Continue', () => continueJob(job), 'play'));
       if (['failed', 'cancelled', 'needs_attention'].includes(job.status)) actions.append(button(retryLabel(job), () => retryJob(job)));
       if (ACTIVE.has(job.status)) actions.append(button(job.status === 'pending' ? 'Remove' : 'Stop', async () => { await bridge.cancelJob({ id: job.id }); showToast(job.status === 'pending' ? 'Prompt removed from the active queue.' : 'Stop requested. Check the provider if this request was already submitted.'); }));
-      if (job.status === 'completed' && job.videoPath) actions.append(reelButton(job), button('Export', async () => {
+      if (job.status === 'completed' && job.videoPath) actions.append(watchButton(job), reelButton(job), button('Export', async () => {
         const result = await bridge.exportVideo({ id: job.id }); if (result?.saved) showToast('Video exported.');
       }, 'download'));
       row.append(mark, details, statusBadge(job), actions);
@@ -455,11 +534,11 @@
       if (cached?.signature === signature) return cached.node;
       const card = element('article', 'video-card');
       const body = element('div', 'video-card-body');
-      const prompt = element('p', 'job-prompt', job.prompt); prompt.title = job.prompt;
+      const prompt = element('p', 'job-prompt', job.title || job.prompt); prompt.title = job.prompt;
       const meta = element('div', 'job-meta'); meta.append(element('span', '', modelName(job.modelId)), element('span', '', timeLabel(job.createdAt)));
       meta.append(durationBadge(job));
       const footer = element('div', 'video-card-footer');
-      footer.append(reelButton(job), button('Show in folder', () => bridge.revealVideo({ id: job.id }), 'folder'), button('Export video', async () => {
+      footer.append(watchButton(job), reelButton(job), button('Show in folder', () => bridge.revealVideo({ id: job.id }), 'folder'), button('Export video', async () => {
         const result = await bridge.exportVideo({ id: job.id }); if (result?.saved) showToast('Video exported.');
       }, 'download'));
       body.append(prompt, meta);
@@ -476,7 +555,8 @@
     if (signature !== lastContentSignature) {
       lastContentSignature = signature;
       const jobs = newestJobs();
-      renderChat(jobs); renderQueue(jobs); renderLibrary(jobs);
+      const generated = jobs.filter(job => job.kind !== 'reel');
+      renderChat(generated); renderQueue(generated); renderLibrary(jobs);
     }
     const warning = [state.recoveryWarning, state.queueError, state.credentialWarning].filter(Boolean).join(' ');
     $('system-banner').textContent = warning;
@@ -516,14 +596,14 @@
     const monitoringOnly = pending.length === 0 && state.jobs.some(job => IN_PROGRESS.has(job.status) && job.remote) && state.paused;
     if (!pending.length && !monitoringOnly) { showToast('Enter a prompt and click Generate first.'); return; }
     ensureFreeReady();
-    await bridge.startQueue({ approvedJobIds: pending.map(job => job.id) });
+    await bridge.startQueue({ approvedJobIds: pending.map(job => job.id), automatic: pending.length > 0 });
     showToast(monitoringOnly ? 'Provider progress checks resumed.' : 'Queue started. Free GPU quota and waiting times apply.');
   }
-  async function startAddedPrompts(result) {
+  async function startAddedPrompts(result, automatic = false) {
     if (!Array.isArray(result?.addedJobIds) || !result.addedJobIds.length) {
       throw new Error('Your prompts were saved, but could not be started. Use Start queue to continue.');
     }
-    try { await bridge.startQueue({ approvedJobIds: result.addedJobIds }); }
+    try { await bridge.startQueue({ approvedJobIds: result.addedJobIds, automatic }); }
     catch (error) { throw new Error('Your prompts were saved. Generation could not start: ' + errorMessage(error)); }
   }
 
@@ -562,8 +642,8 @@
     ensureFreeReady();
     const result = await bridge.addPrompts({ prompts, modelId: $('batch-model').value });
     $('batch-input').value = '';
-    await startAddedPrompts(result);
-    showToast(prompts.length + (prompts.length === 1 ? ' prompt started.' : ' prompts started.') + ' Daily free GPU limits may stop the batch before it finishes.');
+    await startAddedPrompts(result, true);
+    showToast(prompts.length + (prompts.length === 1 ? ' prompt started.' : ' prompts started.') + ' The batch waits for confirmed free GPU allowance resets.');
   }, $('add-batch')));
   $('import-prompts').addEventListener('click', () => action(async () => {
     const imported = await bridge.pickPromptsFile();

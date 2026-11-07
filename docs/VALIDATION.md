@@ -1,5 +1,11 @@
 # Validation record
 
+## Version 1.4 local production
+
+On the target Windows PC, KittenTTS Mini rendered both English voices and Stable Audio 3 Small SFX returned non-silent stereo audio for rain and a door/footsteps prompt. The installed local Ollama model drafted a short scene-specific narration. The production renderer prepared and mixed the drafted voice and generated rain, then assembled a real 15-second 1080 × 1920 H.264/AAC Reel using the two previously saved AI-generated kitchen shots. This local production run took about 35 seconds and made zero remote video requests.
+
+Queue tests cover 500 active prompts, audio preparation before remote submission, waiting on confirmed quotas, recovery after reopening, and preserving completed shots. These tests use fixtures rather than a live 500-video run. Playback tests exercise Watch, mute, seek and Replay with a real AAC track.
+
 ## Version 1.3 Reel export
 
 All 101 source tests passed on Windows. The Reel regression exercises the real FFmpeg crop and fit paths, stereo ambience, original sound and mixed sound. The desktop regression saves and cancels through the normal Reel dialog with a controlled file picker. It verifies a 1080 × 1920 H.264/AAC MP4, audible audio, the source file hash and zero provider requests.

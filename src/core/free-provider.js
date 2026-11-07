@@ -109,13 +109,30 @@ function requestedDuration(modelId, prompt) {
   }
   return seconds;
 }
-function quotaMessage(value) {
+function providerErrorText(value) {
   const text = typeof value === 'string' ? value : JSON.stringify(value ?? 'The free GPU service returned no error details.');
-  const shortened = text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '').slice(0, 700);
-  if (/quota|gpu.*(?:limit|exceed)|too many requests|rate.?limit/i.test(shortened)) {
+  return text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '').slice(0, 700);
+}
+function quotaMessage(value) {
+  const shortened = providerErrorText(value);
+  if (/quota|gpu.*(?:limit|exceed)|too many requests|rate.?limit|\bHTTP 429\b/i.test(shortened)) {
     return `The free shared GPU quota is unavailable or exhausted. Your queue is paused; wait for the provider's quota reset before resuming. ${shortened}`;
   }
   return `The free community GPU could not finish this video. Your queue is paused. ${shortened}`;
+}
+function retryAfter(header) {
+  if (!header) return undefined;
+  const delay = /^\d+$/.test(header) ? Number(header) * 1000 : Date.parse(header) - Date.now();
+  return Number.isSafeInteger(delay) && delay >= 0 ? delay : undefined;
+}
+function terminalQuota(value) {
+  const message = providerErrorText(value);
+  // A generic server error, a queue timeout, or a mention of the word quota
+  // alone cannot authorize resubmission of an acknowledged generation.
+  if (!/\b(?:exceeded your GPU quota|GPU quota (?:has been )?(?:exceeded|exhausted)|not enough GPU quota)\b/i.test(message)) return {};
+  const wait = /\btry again in\s+(\d{1,3}):([0-5]\d):([0-5]\d)\b/i.exec(message);
+  const retryAfterMs = wait ? (Number(wait[1]) * 3600 + Number(wait[2]) * 60 + Number(wait[3])) * 1000 : undefined;
+  return { quotaBlocked: true, retryAfterMs };
 }
 function eventUrl(profile, requestId) { return `${profile.origin}${profile.prefix}/call/${profile.api}/${requestId}`; }
 function validateRemote(remote) {
@@ -179,7 +196,10 @@ class FreeProvider {
     if (!response.ok) {
       let detail = '';
       try { detail = (await response.text()).slice(0, 700); } catch { /* The status remains actionable. */ }
-      throw failure(quotaMessage(`HTTP ${response.status}. ${detail}`), { httpStatus: response.status });
+      throw failure(quotaMessage(`HTTP ${response.status}. ${detail}`), {
+        httpStatus: response.status,
+        ...(response.status === 429 ? { retryAfterMs: retryAfter(response.headers.get('Retry-After')) } : {}),
+      });
     }
     return response;
   }
@@ -257,7 +277,7 @@ class FreeProvider {
           if (!kind || kind === 'heartbeat' || kind === 'generating') continue;
           let data;
           try { data = JSON.parse(payload); } catch { throw failure('The free GPU returned malformed event data.'); }
-          if (kind === 'error') return { status: 'failed', error: quotaMessage(data), pauseQueue: true };
+          if (kind === 'error') return { status: 'failed', error: quotaMessage(data), pauseQueue: true, ...terminalQuota(data) };
           if (kind !== 'complete') throw failure('The free GPU returned an unknown queue event.');
           const file = profile.output === 'file' ? data?.[0] : data?.[0]?.video;
           if (!Array.isArray(data) || !file?.url) throw failure('The free GPU reports completion but returned no video.');

@@ -39,6 +39,7 @@ async function main() {
     assert.equal(info.packaged, true);
     assert.equal(info.version, require('../package.json').version);
     assert.equal(await page.evaluate(() => typeof window.studio.makeReel), 'function');
+    assert.equal(await page.evaluate(async () => (await window.studio.snapshot()).narrationAvailable), true);
     assert.equal(await page.evaluate(() => typeof require), 'undefined');
     const state = await page.evaluate(() => window.studio.snapshot());
     assert.equal(state.paused, true);
