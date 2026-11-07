@@ -31,9 +31,11 @@ jobs:
         run: npm ci --no-audit --no-fund
       - name: Install verified offline voice runtime and model
         run: npm run setup:voice
+      - name: Verify and stage the local video assembly tool
+        run: npm run setup:media
       - name: Check application source
         run: npm run check
-      - name: Test persistence, approvals, queue and provider contracts
+      - name: Test persistence, longer-video assembly, queue and provider contracts
         run: npm test
       - name: Test desktop application without paid requests
         run: npm run test:desktop

@@ -1,11 +1,13 @@
 {
   "name": "ai-video-studio",
-  "version": "1.1.0",
-  "description": "A free-only Windows studio using quota-limited shared GPU video generation.",
+  "version": "1.2.0",
+  "description": "Generate videos directly with verified free shared GPU models.",
   "author": "mrripon66",
   "license": "MIT",
   "main": "src/main/index.js",
-  "engines": { "node": ">=22.12.0" },
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
     "start": "electron .",
     "setup:voice": "node scripts/setup-voice.js",
@@ -16,23 +18,58 @@
     "test:voice": "node scripts/test-voice.js",
     "check": "node scripts/check.js",
     "dist:win": "electron-builder --win nsis --x64 --publish never",
-    "pack:win": "electron-builder --win --x64 --dir --publish never"
+    "pack:win": "electron-builder --win --x64 --dir --publish never",
+    "setup:media": "node scripts/setup-media.js"
   },
   "devDependencies": {
     "@playwright/test": "1.58.2",
     "electron": "45.2.3",
-    "electron-builder": "26.18.0"
+    "electron-builder": "26.18.0",
+    "ffmpeg-static": "5.3.0"
   },
   "build": {
     "appId": "com.mrripon66.aivideostudio",
     "productName": "AI Video Studio",
     "artifactName": "AI-Video-Studio-Setup-${version}-${arch}.${ext}",
-    "directories": { "output": "dist" },
-    "files": ["src/**/*", "package.json", "LICENSE", "third-party/**/*", "docs/VOICE.md"],
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "package.json",
+      "LICENSE",
+      "third-party/**/*",
+      "docs/VOICE.md"
+    ],
     "asar": true,
-    "asarUnpack": ["src/main/dictation.ps1", "src/main/record-audio.ps1"],
-    "extraResources": [{ "from": "resources/voice", "to": "voice", "filter": ["**/*", "!*.zip"] }],
-    "win": { "target": ["nsis"], "icon": "src/assets/icon.ico", "signExecutable": false },
+    "asarUnpack": [
+      "src/main/dictation.ps1",
+      "src/main/record-audio.ps1"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/voice",
+        "to": "voice",
+        "filter": [
+          "**/*",
+          "!*.zip"
+        ]
+      },
+      {
+        "from": "resources/media",
+        "to": "media",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "src/assets/icon.ico",
+      "signExecutable": false
+    },
     "nsis": {
       "oneClick": false,
       "perMachine": false,

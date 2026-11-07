@@ -13,4 +13,5 @@ studio-data/
 .test-data/
 .test-tmp/
 resources/voice/
+resources/media/
 .voice-cache/

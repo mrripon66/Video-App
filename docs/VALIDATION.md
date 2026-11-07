@@ -1,57 +1,58 @@
 # Validation record
 
-Verification date: November 5, 2026. This record identifies checks completed locally and checks still pending for the free-only version 1.1.
+Updated November 6, 2026 for version 1.2. A real anonymous 15-second two-shot film completed, and source, package, installed-upgrade and actual generated-video playback checks passed. GitHub publication remains a separate pending step.
 
-## Automated checks
+## Current source checks
 
-`npm test` currently passes **63 tests** on Windows with Node.js 26.13.0:
+The final `npm test` run passed **100 tests**, including **39 queue tests**, **31 provider tests** and real FFmpeg assembly checks. Syntax checks also passed. The selected film preset is the publisher's native 768 × 512 landscape preset; direct detail clips retain 1536 × 1024.
 
-| Group | Result | Scope |
-| --- | ---: | --- |
-| Store and queue | 25 passed | Atomic persistence, backups, 400 active prompts, exact reviewed IDs, paused restarts, uncertain submission handling, saved-request monitoring, download recovery including interrupted downloads across restart without replaying a consumed event stream, cancellation races, single-flight operations and stopping the batch on provider/quota signals. |
-| Free LTX provider | 14 passed | Anonymous fixed-origin requests, credential/custom-endpoint rejection, live-schema preflight contract, Gradio event handles, fragmented CRLF SSE, returned VideoData, quota stops, failed streams, bounded time/size, and unsupported cancellation. Network responses are injected test fixtures. |
-| Credential vault and downloader | 14 passed | Encryption/storage contracts retained from the earlier implementation; trusted media hosts, redirects, atomic saves, container screening, valid empty MP4 `free`/`skip` boxes, and partial-file cleanup. The free-only UI does not configure provider credentials. |
-| Legacy paid-provider contract | 10 passed | Historical fal request handling. These tests do not make paid calls; the free-only desktop factory does not enable that provider. |
+Provider contracts cover anonymous requests, exact schema ordering and origins, prohibited credentials/custom endpoints, bounded fragmented CRLF streams, quota pauses, saved-handle compatibility, requested durations, the two-shot plan, backend rejection of the failed Wan service, observed AnimateDiff file-URL normalization, and strict detail/film presets. All provider responses in these tests are injected fixtures; no GPU generation is performed. Real local FFmpeg assembly tests validate the executable and duration checks using controlled test media; they are not evidence of fresh AI-generated source shots.
 
-The free provider's read-only checks found the official Lightricks Space running on ZeroGPU, with HTTP 200 for `/config`, `/gradio_api/info` and `/gradio_api/openapi.json`. Its actual ordered text-to-video inputs and VideoData output match the adapter. Metadata inspection alone does not prove a generated video's quality or successful playback.
+All three desktop checks passed: direct generation and queue behavior, saved-request recovery, and local-library playback. The unpacked packaged-app smoke check also passed with a 15-second local fixture and the bundled FFmpeg executable. All 14 application JavaScript/HTML/CSS files inspected matched the source revision in the package. Those fixture-based checks are distinct from the real fresh 15-second GPU workflow below. A fresh 20-second GPU workflow has not been run.
 
-The following desktop checks passed for the free-only 1.1 source:
+Desktop regression coverage includes direct **Generate** and **Generate batch** without review or approval dialogs, selection of newly added jobs, preserving unrelated pending work, 400-prompt persistence, longer-film handling and paused restart. Provider networking is intercepted for these automated checks. Existing evidence includes `test-results/desktop-summary.json`, `test-results/one-click-summary.json` and the recovery/library summaries.
 
-| Desktop check | Observed result |
-| --- | --- |
-| 400-prompt persistence and review | Passed. The queue imports 400 prompts, enforces capacity, presents the exact reviewed batch, and remains paused across restart. Test networking is blocked. |
-| Saved-request recovery | Passed. With zero new pending prompts, the monitoring-only review resumes a saved anonymous Gradio event stream. Attention items count toward capacity; removing one frees capacity. Unconfirmed cancellation details are visible. There are zero generation submissions and zero real network requests in this regression. |
-| Local video library | Passed. The library regression verifies playback, seeking and byte ranges using an official test video fixture, rather than a generated-provider output. |
+The local installer successfully upgraded the application to **version 1.2.0**. The packaged-app smoke check passed against the actual installed path, including the bundled media executable, voice resources and direct generation flow, with **zero network requests**. Existing app data was preserved. The library contains one imported real 15-second validation sample, recorded as a saved job; this sample is an actual generated film rather than a simulated provider result. GitHub publication remains pending.
 
-The final 1.1 installer completed successfully and upgraded the installed app. Packaged-app verification confirmed version 1.1.0, free-only readiness without an API key, one enabled free model and five disabled legacy entries, a paused queue, and local voice availability. Inspection of the installed archive confirmed the MP4 fix and a free-only factory with no paid-provider construction. The installed voice engine transcribed its public sample in about 1.1 seconds.
+## Real anonymous provider outputs
 
-## Live free generation
+| Service | Observed result | Evidence and limit |
+| --- | --- | --- |
+| LTX 2.3 two-shot film | **A real 15-second film completed:** two fresh anonymous GPU clips, requested as 10 + 5 seconds, were downloaded, saved, assembled and fully decoded as **15.0 seconds** at native 768 × 512. Two source clips were retained. A separate Electron playback check decoded 10 frames, advanced playback and sought successfully without errors or further GPU requests. | `../quality-tests/ltx-story-15/report.json` and its `studio.json` preserve both actual request IDs, segment progress and the failed earlier attempt. Final file: `videos/9cccb95b-fa27-4ea9-85b3-8f7b20e02ac7.mp4`. Completed at `2026-11-06T22:44:20.166Z`; anonymous access, **zero paid requests**. This validates the complete 15-second pipeline, not perfect realism or a fresh 20-second GPU result. |
+| LTX 2.3 | A requested three-second whale clip completed, downloaded and played through the studio's real media protocol. The decoded output was **1536 × 1024, 3.041667 seconds**, 1,817,896 bytes. Playback advanced, decoded frames were observed and seeking succeeded. | `test-results/ltx2-generated-summary.json`; `../quality-tests/ltx2-free/report.json`. Completed at `2026-11-06T00:30:11.616Z`. Playback verification blocked all network and made no additional GPU calls. This proves real output and playback, not perfect anatomy or visual quality. |
+| AnimateDiff Lightning | A real anonymous request completed. Its Gradio 4 response contained an incorrect `/call/gen/file=` URL prefix. After strict normalization from matching FileData, the **217,322-byte MP4** was downloaded and fully decoded by FFmpeg as **1.6 seconds**. Electron playback also passed at **512 × 512**, with 7 decoded frames, zero dropped frames and zero network requests. | `../quality-tests/animatediff-free/diagnostic-2/report.json`. Recovery at `2026-11-06T10:03:43.326Z` used the captured completion and made **zero additional generation requests**. |
+| Wan 2.2 Fast 5B | The service accepted an anonymous request, then emitted an error without a reason or video. | `../quality-tests/wan-free/report.json`, completed at `2026-11-06T09:53:22.333Z`. A schema check was insufficient. Wan is disabled for new submissions in both catalog and backend. |
+| Legacy LTX 0.9.8 | An earlier real free request downloaded a 116,582-byte MP4; studio playback decoded 704 × 512 and about 1.9 seconds, with seeking. | `test-results/free-generated-summary.json`. Historical compatibility evidence, not the new LTX 2.3 or long-film workflow. |
 
-The first anonymous free request exposed a container-compatibility bug: valid empty MP4 `free` and `skip` boxes were rejected. The fix retains container screening and passes the expanded test suite. The simplified Gradio completion stream is consumed once, so the old test result could not be replayed; the production queue saves the returned media URL before downloading, and interrupted downloads recover from that URL rather than reopening a consumed stream.
+These live requests used anonymous public services and made zero paid API requests. Automated CI tests remain offline with respect to GPU generation. No quality guarantee is inferred from a successful download or decode.
 
-A fresh anonymous request using the same normal free provider quota completed on November 5, 2026 and returned a real video. The corrected downloader saved its 116,582-byte MP4 successfully. The prompt was: "A small red paper boat floating gently on a calm pond, soft morning light, steady cinematic camera." No account token, paid API request, purchase, identity rotation or quota bypass was used.
+## Longer-film implementation and observed result
 
-The actual generated output then passed production download recovery through the normal desktop `retryJob` action in an isolated workspace. Exactly one HTTPS media GET was made, with zero additional generation requests or unrelated network calls. The downloaded bytes matched the original MP4. The studio decoded 704 × 512 video with a 1.9-second duration, advancing playback and successful seeking, with no renderer errors. Evidence: `test-results/free-generated-summary.json` and `test-results/free-generated-playback.png`. This proves a real free provider output can be downloaded and played; these are not synthetic video results.
+The `ltx2-story-free` option plans 15–20 seconds, defaulting to 15. It requests two independent LTX clips, **10 seconds plus the remainder**, rather than looping or slowing a short clip. Per-shot prompts begin with their own durations and remove the original total-duration instruction. The second shot requests a distinct angle; a cut and possible continuity differences are disclosed.
 
-Both accepted GPU requests used anonymous access to the fixed official Space. Automated CI tests remain offline with respect to video generation and do not consume the shared GPU quota.
+The local composer uses bundled FFmpeg 6.1.1 as a separate process. It checks decoded source durations, joins two sources at 768 × 512/24 fps without audio, and decodes the final file to check its duration before returning success. Short or undecodable sources cause an error. Real local assembly tests passed for 15 and 20 seconds using controlled fixtures; the separate live 15-second provider film also completed these checks. No fresh 20-second GPU generation was performed.
+
+A fresh long-film test first submitted a ten-second shot at the 1536 × 1024 detail preset at `2026-11-06T22:36:47Z`. The provider returned an error without details around `22:38:56Z`, with zero completed source clips from that attempt. This does not prove whether GPU runtime, memory or another service failure caused it. The longer-film profile was changed to the publisher's supported low landscape preset, **768 × 512 native**, retaining the same endpoint, frame rate and 75-second reservation. A subsequent normal anonymous attempt completed the ten-second shot at `22:43:47.334Z`, the five-second shot at `22:44:18.712Z`, and the final decoded 15-second file at `22:44:20.166Z`. Attempt history remains saved; no failed attempt is represented as a successful clip.
+
+Each LTX shot declares 75 seconds of GPU allocation. A future second shot may not fit the remaining anonymous quota even though this test completed. Queue tests verify preserving completed source clips, pausing on quota refusal and continuing unfinished work. Recovery and assembly retries reuse successful generation rather than automatically repeating it. The observed success does not promise uninterrupted free access or identical future service behavior.
+
+The media setup checks the reviewed Windows executable's SHA-256 before staging it, and packages its original license and build README. See [FFmpeg notice](../third-party/FFMPEG-NOTICE.md). CI and local packaging must run `npm run setup:media` as well as voice setup.
 
 ## Recovery and cost boundary
 
-- Adding, importing and reviewing prompts does not run video generation.
-- Starting requires exactly the current reviewed prompt IDs; later additions need another review.
-- Every launch starts paused. Saved request IDs are preserved without automatic replacement submissions.
-- A lost acknowledgement is treated as uncertain because a request may have consumed free quota.
-- Restored backups quarantine ambiguous active work rather than silently repeating it.
-- Download failures preserve the actual output URL for download-only recovery.
-- Quota and service errors pause the remaining batch. The app does not switch identities, providers or authentication to bypass limits.
-- The public Gradio integration has no verified cancellation endpoint. The app reports cancellation as unconfirmed; the accepted request may finish and consume free quota.
-- The free adapter accepts no tokens, provider keys or custom request headers. Requests omit credentials and cannot use a paid balance through an authenticated account.
-- A 400-prompt persistent queue is not a promise of 400 free remote videos or uninterrupted shared-GPU access.
+- Adding or importing a prompt does not generate video. A direct Generate/Generate batch/Start queue click authorizes the selected work; no second approval popup is required.
+- Every launch starts paused. Saved request IDs and returned media addresses are retained; ambiguous acknowledgements are not automatically resubmitted.
+- Download recovery uses the saved actual output URL. Gradio completion events can be consumed once, so recovery must not rely on replaying an old completion stream.
+- Finished source clips are retained for longer-film recovery. Retrying local assembly should use those files without a GPU request. An unsubmitted second shot still requires its own normal free request when continued.
+- Quota and service errors pause remaining work. The app never switches identity, network address, authentication or provider to bypass limits.
+- Cancellation is unconfirmed through the public API; accepted remote work may continue and consume free quota.
+- The free adapter accepts no tokens, keys or custom request headers and omits cookies. Historical paid integrations are disabled.
+- A persistent 400-prompt queue is not a promise of 400 free videos or uninterrupted access.
 
-## Offline voice and media
+## Offline voice, media and release boundaries
 
-Earlier offline voice validation used the bundled Whisper tiny multilingual model for real CPU transcription of a hash-verified official speech fixture, using four threads, in approximately one second. No microphone was captured and no provider credits were used. The bundled runtime includes the required app-local Microsoft DLLs. This verifies executable dependencies and local inference in the tested build. Microphone privacy settings, input quality and speech recognition for the user's voice remain physical-device checks.
+Bundled Whisper tiny multilingual previously transcribed a hash-verified official speech fixture on CPU with four threads in approximately one second. This tested actual local inference and the app-local executable dependencies, without recording the microphone or consuming provider credits. It does not benchmark local video generation. Microphone permissions, recording hardware and recognition of the user's own speech remain physical-device checks.
 
-The media downloader screens supported MP4/WebM container structure and complete byte counts, rejects HTML, still-image brands and truncated headers, and cleans partial files. Container screening is not full decoder validation. The separate library regression uses a pinned official Chromium video fixture to check decoding, playback, seeking and byte ranges; that fixture is excluded from the installer.
+The downloader rejects untrusted hosts, redirects, HTML, still-image container brands and incomplete byte counts, and removes partial files. Container screening is not full decoder validation. The library regression uses a pinned official Chromium video fixture for playback, seeking and byte ranges; that fixture is excluded from the installer. The real LTX playback evidence above is separate from that fixture test.
 
-The Windows installer is unsigned because no publisher certificate was supplied. GitHub publication and hosted build results are tracked by the main task and should reflect the current free-only revision before release.
+The Windows installer is unsigned because no signing certificate was supplied. Source tests, real 15-second generation, actual generated-video playback, unpacked package checks, the installed upgrade and installed-resource checks passed for 1.2.0. GitHub commit/PR, hosted CI and release publication are pending and are not claimed as completed by this record.

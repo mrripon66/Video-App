@@ -2,37 +2,11 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { createHash } = require('node:crypto');
 const { _electron: electron } = require('@playwright/test');
 // Resolve before Playwright evaluates Electron code: the resolver is a Node module.
 const executablePath = require('electron');
 const { Store } = require('../src/core/store');
-
-// A real 58 KB WebM from Chromium's official media tests, at an immutable revision.
-// This is a test fixture only. Neither the fixture nor this script is packaged.
-const FIXTURE = Object.freeze({
-  source: 'https://raw.githubusercontent.com/chromium/chromium/92146310d35807e58f0d376e8ad9908ba2f4f92f/media/test/data/bear.webm',
-  sha256: '7148402273737217b6906704ac430fcfd77268e9f0dbfe19d5f334a496a58d69',
-  bytes: 58199
-});
-const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
-
-async function fixtureBytes(evidence) {
-  const filename = path.join(evidence, 'fixtures', 'bear.webm');
-  if (fs.existsSync(filename)) {
-    const cached = fs.readFileSync(filename);
-    assert.equal(sha256(cached), FIXTURE.sha256, 'Cached official test media must match its pinned hash.');
-    return cached;
-  }
-  const response = await fetch(FIXTURE.source, { signal: AbortSignal.timeout(30000), redirect: 'error' });
-  assert.equal(response.status, 200, 'Official Chromium fixture download must succeed.');
-  const bytes = Buffer.from(await response.arrayBuffer());
-  assert.equal(bytes.length, FIXTURE.bytes, 'Fixture has the expected bounded size.');
-  assert.equal(sha256(bytes), FIXTURE.sha256, 'Downloaded media must match the pinned SHA-256 before use.');
-  fs.mkdirSync(path.dirname(filename), { recursive: true });
-  fs.writeFileSync(filename, bytes);
-  return bytes;
-}
+const { FIXTURE, fixtureBytes } = require('./test-media');
 
 async function main() {
   const root = path.resolve(__dirname, '..');
@@ -83,6 +57,8 @@ async function main() {
     assert.ok(Number.isFinite(metadata.duration) && metadata.duration > 1, 'A real finite video duration is decoded.');
     assert.ok(metadata.width > 0 && metadata.height > 0, 'Chromium decodes real video dimensions.');
     assert.equal(metadata.source, 'studio-media://video/' + jobId);
+    await page.waitForFunction(id => [...document.querySelectorAll('[data-duration-job]')].some(node => node.dataset.durationJob === id && /s/.test(node.textContent)), jobId);
+    assert.match(await page.locator('#library-grid [data-duration-job]').innerText(), new RegExp(String(Number(metadata.duration.toFixed(1))) + 's'), 'Library duration comes from decoded media metadata.');
     await video.evaluate(async node => { node.muted = true; node.currentTime = 0; await node.play(); });
     await page.waitForFunction(() => document.querySelector('#library-grid video')?.currentTime > 0.15, undefined, { timeout: 10000 });
     const advanced = await video.evaluate(node => { node.pause(); return node.currentTime; });

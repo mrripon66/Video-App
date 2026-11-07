@@ -6,12 +6,10 @@ const { pathToFileURL } = require('node:url');
 const { Readable } = require('node:stream');
 const { Store } = require('../core/store');
 const { Queue } = require('../core/queue');
-const { MODELS: PREVIOUS_MODELS } = require('../core/providers');
-const { FREE_MODELS, FreeProvider, FREE_SPACE_ORIGIN } = require('../core/free-provider');
-const MODELS = [...FREE_MODELS, ...PREVIOUS_MODELS.map(model => ({ ...model, available: false,
-  description: 'Not available through the configured free provider.',
-  reason: 'No verified free API is configured for this model. Paid providers are disabled.', docsUrl: null }))];
+const { FREE_MODELS, FreeProvider, createVideoPlan } = require('../core/free-provider');
+const { MODELS, PUBLIC_MODELS, MODEL_ALIASES } = require('../core/catalog');
 const { downloadVideo } = require('./download');
+const { createComposer } = require('./compose');
 const { dictate } = require('./voice');
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'studio-media', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } }]);
@@ -31,7 +29,7 @@ function boot() {
     if (window && !window.isDestroyed()) window.webContents.send('studio:changed');
   }
   function snapshot() {
-    return { ...queue.snapshot(), models: MODELS, settings: store.snapshot().settings, ready: true, freeOnly: true,
+    return { ...queue.snapshot(), models: PUBLIC_MODELS, modelAliases: MODEL_ALIASES, settings: store.snapshot().settings, ready: true, freeOnly: true,
       provider: { name: 'Hugging Face ZeroGPU', description: 'Free shared GPU access with daily quotas and waiting queues.',
         docsUrl: 'https://huggingface.co/docs/hub/spaces-zerogpu' },
       credentials: { fal: false }, voiceAvailable, voiceReason };
@@ -66,14 +64,7 @@ function boot() {
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     window.webContents.on('will-navigate', event => event.preventDefault());
     window.webContents.on('will-attach-webview', event => event.preventDefault());
-    window.on('close', event => {
-      if (!quitting && queue && !queue.snapshot().paused) {
-        const choice = dialog.showMessageBoxSync(window, { type: 'question', buttons: ['Keep studio open', 'Pause and close'], defaultId: 0, cancelId: 0,
-          title: 'Close AI Video Studio?', message: 'Pause this queue and close?', detail: 'An already submitted video may continue using your free quota. Your queue and request IDs are saved. Reopen the studio to resume checking its progress.' });
-        if (choice === 0) { event.preventDefault(); return; }
-      }
-      queue?.pause();
-    });
+    window.on('close', () => { queue?.pause(); });
     window.on('closed', () => { window = null; });
     window.loadFile(rendererPath);
   }
@@ -85,10 +76,11 @@ function boot() {
     fs.mkdirSync(mediaDir, { recursive: true });
     store = new Store(dataDir);
     store.load();
-    queue = new Queue({ store, models: MODELS, providerFactory: model => {
+    queue = new Queue({ store, models: MODELS, providerFactory: (model, context) => {
       if (model.provider !== 'huggingface' || !FREE_MODELS.some(entry => entry.id === model.id)) throw new Error('This application permits only the configured free provider.');
-      return new FreeProvider();
+      return new FreeProvider({ videoPreset: context?.purpose === 'story' ? 'film' : 'detail' });
     },
+      planVideo: createVideoPlan, composeVideo: createComposer({ directory: mediaDir }),
       download: (url, id) => downloadVideo(url, id, mediaDir), onChange: changed, pollIntervalMs: 4000 });
     queue.recover();
     session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
@@ -117,14 +109,17 @@ function boot() {
     });
     handle('snapshot', snapshot);
     handle('getVersion', () => app.getVersion());
-    handle('openProviderSite', () => shell.openExternal('https://huggingface.co/spaces/Lightricks/ltx-video-distilled'));
-    handle('addPrompts', input => { queue.addPrompts(input?.prompts, input?.modelId); return snapshot(); });
+    handle('openProviderSite', () => shell.openExternal('https://huggingface.co/spaces/Lightricks/LTX-2-3'));
+    handle('addPrompts', input => {
+      const jobs = queue.addPrompts(input?.prompts, input?.modelId);
+      return { ...snapshot(), addedJobIds: jobs.map(job => job.id) };
+    });
     handle('startQueue', input => { queue.start(input); return snapshot(); });
     handle('pauseQueue', () => { queue.pause(); return snapshot(); });
     handle('cancelJob', async input => { await queue.cancel(input?.id); return snapshot(); });
     handle('retryJob', async input => {
       const job = getJob(input?.id);
-      if (job.remoteVideoUrl && job.status === 'needs_attention') await queue.retryDownload(job.id);
+      if (job.status === 'needs_attention' && (job.remoteVideoUrl || (job.videoPlan && job.phase === 'compose_failed'))) await queue.retryDownload(job.id);
       else if (job.remote && job.status === 'needs_attention') queue.resume(job.id);
       else queue.retry(job.id);
       return snapshot();
