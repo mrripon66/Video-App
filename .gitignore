@@ -14,4 +14,6 @@ studio-data/
 .test-tmp/
 resources/voice/
 resources/media/
+resources/narration/
+.narration-cache/
 .voice-cache/

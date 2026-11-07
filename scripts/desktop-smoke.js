@@ -96,16 +96,16 @@ async function main() {
     });
     assert.match(tooLong, /15|20|duration|length|seconds/i, 'Unsupported duration is rejected before any generation.');
     await page.evaluate(id => window.studio.cancelJob({ id }), plannedJob.id);
-    await page.evaluate(() => window.studio.addPrompts({ prompts: Array.from({ length: 399 }, (_, i) => 'TEST ONLY: saved capacity prompt ' + i), modelId: 'ltx2-free' }));
+    await page.evaluate(() => window.studio.addPrompts({ prompts: Array.from({ length: 499 }, (_, i) => 'TEST ONLY: saved capacity prompt ' + i), modelId: 'ltx2-free' }));
     const saved = await page.evaluate(() => window.studio.snapshot());
-    assert.equal(saved.stats.active, 400);
-    assert.equal(saved.stats.pending, 400);
-    assert.equal(saved.jobs.length, 404, 'Completed and cancelled history does not reduce active capacity.');
+    assert.equal(saved.stats.active, 500);
+    assert.equal(saved.stats.pending, 500);
+    assert.equal(saved.jobs.length, 504, 'Completed and cancelled history does not reduce active capacity.');
     const overflow = await page.evaluate(async () => {
       try { await window.studio.addPrompts({ prompts: ['Overflow'], modelId: 'ltx2-free' }); return ''; }
       catch (error) { return error.message; }
     });
-    assert.match(overflow, /400/);
+    assert.match(overflow, /500/);
     const invalidSelection = await page.evaluate(async () => {
       try { await window.studio.startQueue({ approvedJobIds: ['unknown-job'] }); return ''; }
       catch (error) { return error.message; }
@@ -127,16 +127,16 @@ async function main() {
     await application.close(); application = null;
     page = await launch();
     const restored = await page.evaluate(() => window.studio.snapshot());
-    assert.equal(restored.stats.active, 400);
+    assert.equal(restored.stats.active, 500);
     assert.equal(restored.stats.completed, 3);
     assert.equal(restored.paused, true);
-    assert.equal((await application.evaluate(() => global.__desktopNetwork)).submissions, 0, 'Saved prompts never restart automatically.');
+    assert.equal((await application.evaluate(() => global.__desktopNetwork)).submissions, 0, 'Saved prompts without automatic authorization stay paused.');
     assert.deepEqual(pageErrors, []);
-    fs.writeFileSync(path.join(evidence, 'desktop-summary.json'), JSON.stringify({ passed: true, activePrompts: 400, completedFixtures: 3,
+    fs.writeFileSync(path.join(evidence, 'desktop-summary.json'), JSON.stringify({ passed: true, activePrompts: 500, completedFixtures: 3,
       mockedGenerationRequests: 3, actualNetworkRequests: 0, noApprovalDialogs: true, unrelatedPendingPreserved: true, pausedRestart: true,
       storyDefaultSelected: true, twentySecondPlan: [10, 10], unsupportedDurationRejected: true,
       limitations: ['Short-clip completions use labelled test footage; this test does not represent a generated 15–20s video.'] }, null, 2));
-    console.log('Desktop verification passed: direct single/batch generation, no approval dialogs, 400 saved prompts, no external requests.');
+    console.log('Desktop verification passed: direct single/batch generation, no approval dialogs, 500 saved prompts, no external requests.');
   } finally { if (application) await application.close().catch(() => {}); }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

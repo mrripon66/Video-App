@@ -1,6 +1,6 @@
 # AI Video Studio
 
-A free-only Windows desktop studio with a chat-style prompt workspace, voice input, a persistent 400-prompt queue and a local video library. Video generation uses anonymous, quota-limited Hugging Face GPU services. Your Windows PC handles the interface, voice transcription, downloads and local video assembly; a dedicated GPU is not required.
+A free-only Windows desktop studio with a chat-style prompt workspace, voice input, a persistent 500-prompt queue and a local video library. Video generation uses anonymous, quota-limited Hugging Face GPU services. Your Windows PC handles narration, sound, voice transcription, downloads and assembly.
 
 Use the **15–20 second LTX film** option to join two newly generated shots. LTX 2.3 single clips and AnimateDiff short animations are also available. Version 1.3 adds vertical Reel export with locally generated stereo ambience. Wan, CogVideoX and Hunyuan show their availability in Settings. Video generation uses anonymous free GPU access.
 
@@ -10,11 +10,29 @@ Download the Windows x64 installer from [GitHub Releases](https://github.com/mrr
 
 1. In **Create**, type your prompt and choose a video option. **Voice prompt** records your voice and turns it into editable text locally.
 2. Click **Generate** to start directly. There is no review or approval popup. For the two-shot option, include a duration such as `18-second`, or use its 15-second default.
-3. **Batch queue** accepts a UTF-8 `.txt` file with one prompt per nonempty line, up to 400 active prompts. **Generate batch** starts the newly added prompts. **Start queue** starts saved, available-model prompts.
+3. **Batch queue** accepts a UTF-8 `.txt` file with one prompt per nonempty line, up to 500 active prompts. **Generate batch** works through the newly added prompts in order.
 4. Shared queues, service downtime and daily free GPU quotas can pause work. Only work started by your click is submitted; unrelated pending prompts stay paused.
 5. Completed videos appear in **Library**, where you can play, export or reveal the local files.
 
-The queue starts paused after every launch. Pause prevents new submissions; an accepted remote request may continue using free quota. Cancellation cannot be confirmed through these public APIs. Accepted requests and actual returned video addresses are saved for recovery rather than automatically generating replacements.
+An explicitly started automatic batch is saved across restarts and waits for confirmed quota refusals to reset. Pause stops the batch schedule. Saved remote handles are used for monitoring, and ambiguous requests are held for review. Free GPU availability determines throughput.
+
+## One prompt with narration and sound
+
+Use the 15–20 second film option. Describe the scene, then add optional instructions on separate lines.
+
+```text
+Create a 15-second quiet story about tea on a rainy morning.
+Narration: auto
+Voice: warm
+Sound: Rain tapping the window and a quiet room in the background
+Format: reel
+```
+
+For a batch, place one complete prompt on each line and separate its instructions with ` | `. Use `Narration:` followed by exact words for a script you wrote, and `Voice: clear` for the other English voice. `Format: crop` fills the vertical frame and `Format: original` keeps the source framing. Audio prepares locally before submitting a shot, so a script that exceeds the video length is caught first.
+
+The included KittenTTS Mini engine reads English offline. `Narration: auto` uses the local `qwen3.5:4b` model in Ollama. Described effects and ambience use the optional Stable Audio 3 Small SFX CPU add-on. Preset rain, ocean, and room sounds are available from the app itself. See [sound setup and license](third-party/PROMPT-SOUND-NOTICE.md). Powered by Stability AI.
+
+Choose **Watch** on a completed video to play, replay, and control sound in the studio. Saved Reels also appear in **Video library**.
 
 ## Make a Reel
 
@@ -39,7 +57,7 @@ Explicit numeric durations are checked before GPU submission. For example, a `15
 
 [Hugging Face currently documents](https://huggingface.co/docs/hub/spaces-zerogpu) two GPU minutes per day anonymously and five for a free signed-in account. This app uses anonymous access only. LTX 2.3 declares a 75-second reservation **for each shot**; AnimateDiff declares 60 seconds. The two-shot film needs two separate requests, so remaining quota may prevent its second shot from starting until a normal quota reset. Completed shots are saved and reused when you continue.
 
-The 400-prompt queue is storage capacity, not 400 free videos per day. The app pauses on quota errors and does not use paid overages, rotate identities, change IP addresses or switch services to bypass limits. Waiting longer cannot guarantee public service availability.
+The queue can hold 500 active prompts. Daily video throughput depends on the anonymous free GPU allowance and availability. A confirmed quota refusal schedules a wait for an active automatic batch, while ambiguous provider errors require review.
 
 Use **Retry / recover** for saved work. An acknowledged request is monitored using its saved ID; a known output can be downloaded again; local assembly can be retried using the saved clips. Continuing an unsubmitted second shot makes a new normal free GPU request. A lost acknowledgement is held as uncertain rather than automatically duplicated.
 

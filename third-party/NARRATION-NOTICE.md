@@ -1,0 +1,9 @@
+# Offline narration notices
+
+AI Video Studio runs the Sherpa-ONNX Windows x64 CPU command-line tool locally for English narration. The build fetches the official release archive and verifies its size and SHA-256 before extraction. [Sherpa-ONNX v2.0.1 source and releases](https://github.com/k2-fsa/sherpa-onnx/tree/v2.0.1) · [Apache-2.0 license](https://github.com/k2-fsa/sherpa-onnx/blob/v2.0.1/LICENSE)
+
+KittenTTS Mini 0.8 supplies the neural voices. The build uses the official Sherpa-ONNX distribution and its English pronunciation lexicon. Sherpa-ONNX 2.x uses its lexicon frontend, so the installer omits the eSpeak data included in the upstream model archive. [KittenML model and Apache-2.0 license](https://huggingface.co/KittenML/kitten-tts-mini-0.8) · [Sherpa-ONNX model package and speaker information](https://k2-fsa.github.io/sherpa/onnx/tts/all/English/kitten-mini-en-v0_8.html) · [Lexicon configuration](https://github.com/k2-fsa/sherpa-onnx/blob/v2.0.1/cxx-api-examples/kitten-tts-en-cxx-api.cc)
+
+The Windows runtime includes Microsoft ONNX Runtime 1.28.2. Its license and third-party notices are packaged alongside the narration assets. [ONNX Runtime source](https://github.com/microsoft/onnxruntime/tree/v1.28.2) · [MIT license](https://github.com/microsoft/onnxruntime/blob/v1.28.2/LICENSE) · [Third-party notices](https://github.com/microsoft/onnxruntime/blob/v1.28.2/ThirdPartyNotices.txt)
+
+The upstream lexicon credits the Carnegie Mellon Pronouncing Dictionary (CMUDict), `en_list`, and compound entries. The installer includes the original CMUDict copyright and license. [Upstream lexicon](https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/lexicon-en-us.txt) · [CMUDict license](https://github.com/cmusphinx/cmudict/blob/74790861f652b15e4ac49015a90074ad62a27690/LICENSE) · [eSpeak NG English source dictionary](https://github.com/espeak-ng/espeak-ng/blob/master/dictsource/en_list)

@@ -33,6 +33,8 @@ jobs:
         run: npm run setup:voice
       - name: Verify and stage the local video assembly tool
         run: npm run setup:media
+      - name: Verify and stage the offline narration engine
+        run: npm run setup:narration
       - name: Check application source
         run: npm run check
       - name: Test persistence, longer-video assembly, queue and provider contracts

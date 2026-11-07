@@ -3,6 +3,8 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { mediaExecutable, runMedia } = require('./compose');
 const { SOUND_PRESETS, writeSoundtrack } = require('./sound');
+const { writeNarration } = require('./narration');
+const { writePromptSound } = require('./prompt-sound');
 
 const WIDTH = 1080;
 const HEIGHT = 1920;
@@ -40,6 +42,7 @@ async function currentDestination(destination, sourceStat, overwrite) {
 
 function videoFilter(framing) {
   const source = '[0:V:0]scale=ceil(iw*sar/2)*2:ih,setsar=1,fps=30';
+  if (framing === 'source') return `${source}[v]`;
   if (framing === 'crop') {
     return `${source},scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase:force_divisible_by=2,crop=${WIDTH}:${HEIGHT},setsar=1[v]`;
   }
@@ -51,12 +54,57 @@ function videoFilter(framing) {
   ].join(';');
 }
 
-async function createReel({ source, destination, framing = 'fit', sound = 'rain', overwrite = false, executable = mediaExecutable() }) {
+async function prepareMix({ args, staging, original, sound, soundPrompt, soundFile, narration, voice, narrationFile }) {
+  const filters = [];
+  const tracks = [];
+  const duration = original.durationSeconds;
+  const hasNarration = !!(narration || narrationFile);
+  let input = 1;
+  function addWav(filename) {
+    args.push('-f', 'wav', '-protocol_whitelist', 'file,pipe', '-i', filename);
+    return `[${input++}:a:0]`;
+  }
+  if (original.audio) {
+    filters.push(`[0:a:0]aresample=48000:async=1:first_pts=0,aformat=channel_layouts=stereo,apad,atrim=duration=${duration}[original]`);
+    tracks.push({ label: '[original]', gain: hasNarration ? 0.18 : sound === 'none' ? 1 : 0.9 });
+  }
+  if (sound !== 'none') {
+    let filename = soundFile;
+    if (!filename) {
+      filename = path.join(staging, 'sound.wav');
+      const durationSeconds = Math.max(1, duration);
+      if (sound === 'prompt') await writePromptSound({ filename, prompt: soundPrompt, durationSeconds });
+      else await writeSoundtrack({ filename, preset: sound, durationSeconds });
+    }
+    filters.push(`${addWav(filename)}aresample=48000,aformat=channel_layouts=stereo,apad,atrim=duration=${duration}${sound === 'prompt' ? ',loudnorm=I=-21:TP=-3:LRA=9,aresample=48000' : ',volume=5dB'}[bed]`);
+    tracks.push({ label: '[bed]', gain: hasNarration ? 0.32 : original.audio ? 0.18 : 1 });
+  }
+  if (hasNarration) {
+    let filename = narrationFile;
+    if (!filename) {
+      filename = path.join(staging, 'narration.wav');
+      const rendered = await writeNarration({ filename, text: narration, voice });
+      if (rendered.durationSeconds + 0.25 > duration) throw new Error(`The narration is ${rendered.durationSeconds.toFixed(1)} seconds. Shorten it to fit this ${duration.toFixed(1)}-second video.`);
+    }
+    filters.push(`${addWav(filename)}loudnorm=I=-16:TP=-2:LRA=9,aresample=48000,aformat=channel_layouts=stereo,adelay=200:all=1,apad,atrim=duration=${duration}[narrator]`);
+    tracks.push({ label: '[narrator]', gain: 1 });
+  }
+  if (!tracks.length) return { filters, audioMap: null };
+  if (tracks.length === 1 && tracks[0].label === '[original]') return { filters, audioMap: '[original]' };
+  const labels = tracks.map(track => track.label).join('');
+  const mix = tracks.length === 1 ? `${labels}volume=${tracks[0].gain},` :
+    `${labels}amix=inputs=${tracks.length}:duration=first:normalize=0:weights='${tracks.map(track => track.gain).join(' ')}',`;
+  filters.push(`${mix}alimiter=limit=0.89:level=0:latency=1[a]`);
+  return { filters, audioMap: '[a]' };
+}
+
+async function createReel({ source, destination, framing = 'fit', sound = 'rain', soundPrompt = '', soundFile,
+  narration = '', voice = 'warm', narrationFile, overwrite = false, executable = mediaExecutable() }) {
   if (typeof source !== 'string' || !/\.(mp4|webm)$/i.test(source) || typeof destination !== 'string' || !/\.mp4$/i.test(destination)) {
     throw new Error('Choose a local video and an MP4 export filename.');
   }
-  if (!['fit', 'crop'].includes(framing) || typeof sound !== 'string' ||
-    (sound !== 'none' && !Object.hasOwn(SOUND_PRESETS, sound)) || typeof overwrite !== 'boolean') {
+  if (!['fit', 'crop', 'source'].includes(framing) || typeof sound !== 'string' ||
+    (sound !== 'none' && sound !== 'prompt' && !Object.hasOwn(SOUND_PRESETS, sound)) || typeof overwrite !== 'boolean') {
     throw new Error('Choose a valid Reel framing and soundtrack.');
   }
   const input = await fs.realpath(source);
@@ -81,39 +129,25 @@ async function createReel({ source, destination, framing = 'fit', sound = 'rain'
 
     staging = await fs.mkdtemp(path.join(parent, '.studio-reel-'));
     const encoded = path.join(staging, 'reel.mp4');
-    const bed = path.join(staging, 'sound.wav');
     const args = ['-v', 'error', '-xerror', '-n', '-filter_complex_threads', '2', ...INPUT_VIDEO, '-i', input];
-    let filters = videoFilter(framing);
-    let audioMap = '0:a:0?';
-    if (sound !== 'none') {
-      await writeSoundtrack({ filename: bed, preset: sound, durationSeconds: Math.max(1, original.durationSeconds) });
-      args.push('-f', 'wav', '-protocol_whitelist', 'file,pipe', '-i', bed);
-      const bedGain = original.audio ? '' : ',volume=5dB,alimiter=limit=0.89:level=0:latency=1';
-      filters += `;[1:a:0]atrim=duration=${original.durationSeconds}${bedGain}[bed]`;
-      audioMap = '[bed]';
-      if (original.audio) {
-        filters += ';[0:a:0]aresample=48000:async=1:first_pts=0,aformat=channel_layouts=stereo[original];' +
-          "[bed][original]amix=inputs=2:duration=first:normalize=0:weights='0.28 0.9',alimiter=limit=0.89:level=0:latency=1[a]";
-        audioMap = '[a]';
-      }
-    }
-    args.push('-filter_complex', filters, '-map', '[v]', '-map', audioMap);
-    if (sound === 'none' && original.audio) args.push('-af', `atrim=duration=${original.durationSeconds}`);
+    const mix = await prepareMix({ args, staging, original, sound, soundPrompt, soundFile, narration, voice, narrationFile });
+    args.push('-filter_complex', [videoFilter(framing), ...mix.filters].join(';'), '-map', '[v]');
+    if (mix.audioMap) args.push('-map', mix.audioMap);
     args.push('-map_metadata', '-1', '-map_chapters', '-1', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '19', '-profile:v', 'high',
       '-level:v', '4.1', '-pix_fmt', 'yuv420p', '-threads', '4', '-c:a', 'aac', '-ar', '48000', '-ac', '2', '-b:a', '160k',
       '-movflags', '+faststart', encoded, '-progress', 'pipe:1', '-nostats');
     await runMedia(executable, args);
 
     const result = await inspectVideo(encoded, executable);
-    if (result.width !== WIDTH || result.height !== HEIGHT || !/^h264\b/.test(result.video) ||
+    if ((framing !== 'source' && (result.width !== WIDTH || result.height !== HEIGHT)) || !/^h264\b/.test(result.video) ||
       Math.abs(result.durationSeconds - original.durationSeconds) > FRAME_TOLERANCE) {
       throw new Error('The exported Reel did not match the expected size or duration.');
     }
-    if (sound !== 'none' || original.audio) {
+    if (mix.audioMap) {
       if (!/^aac\b.*48000 Hz.*stereo/.test(result.audio)) throw new Error('The exported Reel is missing its stereo soundtrack.');
       const decoded = await runMedia(executable, ['-v', 'error', '-xerror', ...INPUT_VIDEO, '-i', encoded,
         '-map', '0:a:0', '-vn', '-f', 'null', '-', '-progress', 'pipe:1', '-nostats']);
-      if (!(decoded.durationSeconds > 0) || (sound !== 'none' && decoded.durationSeconds + FRAME_TOLERANCE < result.durationSeconds)) {
+      if (!(decoded.durationSeconds > 0) || decoded.durationSeconds + FRAME_TOLERANCE < result.durationSeconds) {
         throw new Error('The exported soundtrack did not decode through the end of the Reel.');
       }
     }
@@ -139,6 +173,7 @@ async function createReel({ source, destination, framing = 'fit', sound = 'rain'
   } finally {
     if (staging) {
       await fs.unlink(path.join(staging, 'sound.wav')).catch(() => {});
+      await fs.unlink(path.join(staging, 'narration.wav')).catch(() => {});
       await fs.unlink(path.join(staging, 'reel.mp4')).catch(() => {});
       await fs.rmdir(staging).catch(() => {});
     }

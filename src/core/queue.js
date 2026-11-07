@@ -5,6 +5,9 @@ const { randomUUID } = require('node:crypto');
 const ACTIVE = new Set(['pending', 'submitting', 'queued', 'running', 'needs_attention']);
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
 const REMOTE_ACTIVE = new Set(['queued', 'running']);
+const ACTIVE_LIMIT = 500;
+const MIN_RETRY_MS = 60 * 1000;
+const DEFAULT_RETRY_MS = 24 * 60 * 60 * 1000;
 const now = () => new Date().toISOString();
 const detail = error => String(error && error.message || error || 'Unknown error').slice(0, 1200);
 
@@ -21,8 +24,18 @@ function validateVideoPlan(plan) {
   return plan;
 }
 
+function automaticBatch(settings) {
+  const batch = settings.automaticBatch;
+  if (!batch || !Array.isArray(batch.jobIds) || !batch.jobIds.length || batch.jobIds.length > ACTIVE_LIMIT ||
+    batch.jobIds.some(id => typeof id !== 'string' || !id) || new Set(batch.jobIds).size !== batch.jobIds.length ||
+    (batch.retryAt !== null && (!Number.isSafeInteger(batch.retryAt) || batch.retryAt <= 0))) return null;
+  return batch;
+}
+
 class Queue {
-  constructor({ store, models, providerFactory, download, planVideo = () => null, composeVideo, onChange = () => {}, pollIntervalMs = 5000, maxPollErrors = 3, maxJobDurationMs = 2 * 60 * 60 * 1000 }) {
+  constructor({ store, models, providerFactory, download, planVideo = () => null, composeVideo, prepareVideo,
+    onChange = () => {}, pollIntervalMs = 5000, maxPollErrors = 3, maxJobDurationMs = 2 * 60 * 60 * 1000,
+    retryClock = { now: Date.now, setTimeout, clearTimeout } }) {
     if (!store || typeof providerFactory !== 'function' || typeof download !== 'function') throw new Error('Queue storage, provider and downloader are required.');
     this.store = store;
     this.models = new Map(models.map(model => [model.id, model]));
@@ -30,6 +43,9 @@ class Queue {
     this.download = download;
     this.planVideo = planVideo;
     this.composeVideo = composeVideo;
+    this.prepareVideo = prepareVideo;
+    this.retryClock = retryClock;
+    this._retryTimer = null;
     this.onChange = onChange;
     this.pollIntervalMs = pollIntervalMs;
     this.maxPollErrors = maxPollErrors;
@@ -51,7 +67,9 @@ class Queue {
       stats[job.status]++;
       if (ACTIVE.has(job.status)) stats.active++;
     }
-    return { ...state, paused: this.paused, running: !!this._runner, activeJobId: this._activeId, stats, recoveryWarning: this.store.recoveryWarning || null, queueError: this.queueError || null };
+    const batch = automaticBatch(state.settings);
+    return { ...state, paused: this.paused, running: !!this._runner, activeJobId: this._activeId, stats, automaticBatch: batch,
+      nextRetryAt: batch?.retryAt ?? null, recoveryWarning: this.store.recoveryWarning || null, queueError: this.queueError || null };
   }
 
   _emit() {
@@ -90,12 +108,13 @@ class Queue {
         validateVideoPlan(videoPlan);
         this._model('ltx2-free');
         if (typeof this.composeVideo !== 'function') throw new Error('Long-video assembly is unavailable. No prompts were added.');
+        if (videoPlan.production && typeof this.prepareVideo !== 'function') throw new Error('Local sound preparation is unavailable. No prompts were added.');
       }
       return { id: randomUUID(), prompt, modelId, status: 'pending', createdAt: now(), updatedAt: now(), attempts: [],
         ...(videoPlan ? { videoPlan, segments: videoPlan.segments.map(segment => ({ ...segment, status: 'pending' })), segmentIndex: 0 } : {}) };
     });
     this.store.mutate(state => {
-      if (state.jobs.filter(job => ACTIVE.has(job.status)).length + jobs.length > 400) throw new Error('The queue holds up to 400 active prompts. Finish or cancel some prompts before adding more.');
+      if (state.jobs.filter(job => ACTIVE.has(job.status)).length + jobs.length > ACTIVE_LIMIT) throw new Error(`The queue holds up to ${ACTIVE_LIMIT} active prompts. Finish or cancel some prompts before adding more.`);
       state.jobs.push(...jobs);
     });
     this._emit();
@@ -103,6 +122,7 @@ class Queue {
   }
 
   recover() {
+    this._clearRetryTimer();
     this.paused = true;
     this._approved.clear();
     this._monitored.clear();
@@ -136,20 +156,27 @@ class Queue {
           job.updatedAt = now();
         }
       }
+      if (this.store.recoveryWarning || !automaticBatch(state.settings)) delete state.settings.automaticBatch;
     });
+    this._resumeAutomatic();
     this._emit();
     return this.snapshot();
   }
 
-  start({ approvedJobIds } = {}) {
+  start({ approvedJobIds, automatic = false } = {}) {
     if (this._disposed) throw new Error('The queue has closed. Restart the app to continue.');
     if (!Array.isArray(approvedJobIds) || approvedJobIds.some(id => typeof id !== 'string')) throw new Error('Select pending prompt IDs before generating.');
     if (new Set(approvedJobIds).size !== approvedJobIds.length) throw new Error('Select each pending prompt only once.');
-    const jobs = this.store.snapshot().jobs;
+    const saved = this.store.snapshot();
+    const jobs = saved.jobs;
     const pending = jobs.filter(job => job.status === 'pending');
     const byId = new Map(pending.map(job => [job.id, job]));
     const approved = new Set(approvedJobIds);
     if (approvedJobIds.some(id => !byId.has(id))) throw new Error('A selected prompt is missing or no longer pending. Refresh the queue and try again.');
+    if (automatic && !approved.size) throw new Error('Select pending prompts for the automatic batch.');
+    const batch = automaticBatch(saved.settings);
+    if (approved.size && batch) throw new Error('Pause the current automatic batch before starting other videos.');
+    if (automatic && this._runner) throw new Error('Wait for the current video to finish before starting an automatic batch.');
     if (!approved.size && !jobs.some(job => REMOTE_ACTIVE.has(job.status) && job.remote)) throw new Error('There are no saved provider requests to monitor. Select pending prompts to generate.');
     const selected = approvedJobIds.map(id => byId.get(id));
     for (const job of selected) this._model(job.modelId);
@@ -163,9 +190,11 @@ class Queue {
       if (job.videoPlan) this.providerFactory(this._model(modelId), { purpose: 'story' });
       else this.providerFactory(this._model(modelId));
     }
+    if (automatic) this.store.mutate(state => { state.settings.automaticBatch = { jobIds: approvedJobIds, retryAt: null }; });
     this.queueError = null;
     // A new Generate click adds only its selected jobs. Existing unrelated
-    // pending work receives no permission, and pause/restart clears selections.
+    // pending work receives no permission. Only an explicitly started automatic
+    // batch survives a restart.
     if (this.paused) this._approved.clear();
     for (const id of approved) this._approved.add(id);
     if (approved.size) this.paused = false;
@@ -180,10 +209,84 @@ class Queue {
   }
 
   pause() {
-    this.paused = true;
-    this._approved.clear();
+    this._hold();
     this._emit();
     return this.snapshot();
+  }
+
+  _clearRetryTimer() {
+    if (this._retryTimer !== null) this.retryClock.clearTimeout(this._retryTimer);
+    this._retryTimer = null;
+  }
+
+  _hold(preserveAutomatic = false) {
+    this.paused = true;
+    this._approved.clear();
+    this._clearRetryTimer();
+    if (!preserveAutomatic && Object.hasOwn(this.store.snapshot().settings, 'automaticBatch')) {
+      this.store.mutate(state => { delete state.settings.automaticBatch; });
+    }
+  }
+
+  _resumeAutomatic() {
+    this._clearRetryTimer();
+    if (this._disposed) return;
+    const state = this.store.snapshot();
+    const batch = automaticBatch(state.settings);
+    if (!batch) return;
+    const selected = state.jobs.filter(job => batch.jobIds.includes(job.id) && !['completed', 'cancelled'].includes(job.status));
+    if (!selected.length || selected.some(job => job.status !== 'pending' && !(REMOTE_ACTIVE.has(job.status) && job.remote))) {
+      this._hold();
+      return;
+    }
+    const wait = (batch.retryAt ?? 0) - this.retryClock.now();
+    if (wait > 0) {
+      this._retryTimer = this.retryClock.setTimeout(() => {
+        this._retryTimer = null;
+        try { this._resumeAutomatic(); }
+        catch (error) { this.paused = true; this._approved.clear(); this.queueError = detail(error); }
+        this._emit();
+      }, Math.min(wait, 2147483647));
+      this._retryTimer?.unref?.();
+      return;
+    }
+    if (batch.retryAt !== null) this.store.mutate(value => { value.settings.automaticBatch.retryAt = null; });
+    this.paused = false;
+    for (const job of selected) {
+      if (job.status === 'pending') this._approved.add(job.id);
+      else this._monitored.add(job.id);
+    }
+    this._ensureRunner();
+  }
+
+  _deferAutomatic(id, reason, index = null) {
+    const batch = automaticBatch(this.store.snapshot().settings);
+    if (!batch?.jobIds.includes(id) || this._job(id)?.cancelRequested) return false;
+    const delay = Number.isSafeInteger(reason.retryAfterMs) && reason.retryAfterMs >= 0
+      ? Math.max(MIN_RETRY_MS, reason.retryAfterMs) : DEFAULT_RETRY_MS;
+    const retryAt = this.retryClock.now() + delay;
+    if (!Number.isSafeInteger(retryAt)) return false;
+    this._hold(true);
+    this._monitored.delete(id);
+    this.store.mutate(state => {
+      const job = state.jobs.find(item => item.id === id);
+      const message = 'Free GPU quota is unavailable. This automatic batch will wait before trying again.';
+      const reset = item => {
+        item.attempts = [...(item.attempts || []), { status: 'failed', remote: item.remote || null, error: detail(reason.error || reason), endedAt: now() }];
+        item.status = 'pending';
+        for (const field of ['remote', 'remoteVideoUrl', 'error', 'startedAt', 'completedAt']) delete item[field];
+      };
+      reset(job);
+      if (index !== null) reset(job.segments[index]);
+      job.phase = 'waiting_quota'; job.error = message; job.updatedAt = now();
+      state.settings.automaticBatch.retryAt = retryAt;
+    });
+    this._emit();
+    return true;
+  }
+
+  _automaticOwns(id) {
+    return automaticBatch(this.store.snapshot().settings)?.jobIds.includes(id) === true;
   }
 
   _ensureRunner() {
@@ -192,8 +295,7 @@ class Queue {
     // Defer the first operation so running=true is visible consistently during callbacks.
     this._runner = Promise.resolve().then(() => this._run()).catch(error => {
       runnerFailed = true;
-      this.paused = true;
-      this._approved.clear();
+      try { this._hold(); } catch { /* The queue still stops in memory if the disk is unavailable. */ }
       if (this._activeId) {
         try { this._update(this._activeId, job => { job.status = 'needs_attention'; job.error = `The queue stopped safely: ${detail(error)}`; }); } catch { /* Disk failures are reported through queueError. */ }
       }
@@ -201,7 +303,8 @@ class Queue {
     }).finally(() => {
       this._runner = null;
       this._activeId = null;
-      const jobs = this.store.snapshot().jobs;
+      const state = this.store.snapshot();
+      const jobs = state.jobs;
       const pendingIds = new Set(jobs.filter(job => job.status === 'pending').map(job => job.id));
       this._approved = new Set([...this._approved].filter(id => pendingIds.has(id)));
       const remoteIds = new Set(jobs.filter(job => REMOTE_ACTIVE.has(job.status) && job.remote).map(job => job.id));
@@ -210,7 +313,11 @@ class Queue {
       // finalizer. Start a successor instead of losing that explicit action.
       const hasWork = this._hasRunnable(jobs);
       if (!runnerFailed && !this._disposed && hasWork) this._ensureRunner();
-      else { this.paused = true; this._approved.clear(); }
+      else {
+        const waiting = automaticBatch(state.settings)?.retryAt != null;
+        this._hold(this._disposed || (!runnerFailed && waiting));
+        if (!this._disposed && waiting && !runnerFailed) this._resumeAutomatic();
+      }
       this._emit();
     });
   }
@@ -223,6 +330,8 @@ class Queue {
       if (!job) return;
       this._activeId = job.id;
       await this._process(job);
+      const outcome = this._job(job.id);
+      if (!this._disposed && this._automaticOwns(job.id) && ['failed', 'needs_attention'].includes(outcome?.status)) this._hold();
       this._activeId = null;
     }
   }
@@ -284,7 +393,8 @@ class Queue {
       job.error = 'The restored backup may predate an accepted shot. Check before explicitly retrying; saved shots will be kept.';
     } else {
       delete job.remote; delete job.remoteVideoUrl;
-      job.status = 'pending'; job.phase = 'story_paused';
+      job.status = 'pending';
+      if (job.phase !== 'waiting_quota') job.phase = 'story_paused';
     }
   }
 
@@ -299,7 +409,7 @@ class Queue {
       this._update(initial.id, job => { job.status = 'needs_attention'; job.phase = 'invalid_plan'; job.error = detail(error); });
       return;
     }
-    let allowSubmission = false;
+    let allowSubmission = !this.paused && this._automaticOwns(initial.id);
     if (initial.status === 'pending') {
       if (this.paused || !this._approved.delete(initial.id)) return;
       allowSubmission = true;
@@ -334,6 +444,19 @@ class Queue {
           this._update(job.id, item => { item.status = 'pending'; item.phase = 'story_paused'; delete item.remote; delete item.remoteVideoUrl; });
           return;
         }
+        if (job.videoPlan.production && !job.prepared) {
+          this._update(job.id, item => { item.status = 'running'; item.phase = 'preparing'; delete item.error; });
+          try {
+            if (typeof this.prepareVideo !== 'function') throw new Error('Local sound preparation is unavailable.');
+            await this.prepareVideo(job);
+          } catch (error) {
+            if (current()) this._update(job.id, item => { item.status = 'failed'; item.phase = 'prepare_failed'; item.error = detail(error); });
+            return;
+          }
+          if (!current()) return;
+          this._update(job.id, item => { item.prepared = true; });
+          continue;
+        }
         this._update(job.id, item => {
           item.segmentIndex = index; item.status = 'submitting'; item.phase = 'generating';
           item.startedAt ||= now(); delete item.error;
@@ -346,6 +469,7 @@ class Queue {
         } catch (error) {
           if (!current()) return;
           const definitive = error.submissionUncertain === false || (Number.isInteger(error.httpStatus) && error.httpStatus >= 400 && error.httpStatus < 500 && error.httpStatus !== 408);
+          if (error.httpStatus === 429 && error.submissionUncertain !== true && this._deferAutomatic(job.id, error, index)) return;
           if (error.pauseQueue || [401, 402, 403, 429].includes(error.httpStatus)) this.pause();
           this._update(job.id, item => {
             item.status = definitive ? 'failed' : 'needs_attention';
@@ -399,6 +523,7 @@ class Queue {
           break;
         }
         if (result.status === 'failed' || result.status === 'cancelled') {
+          if (result.status === 'failed' && result.quotaBlocked === true && this._deferAutomatic(job.id, result, index)) return;
           if (result.pauseQueue) this.pause();
           this._update(job.id, item => {
             item.status = result.status; item.segments[index].status = result.status;
@@ -493,9 +618,9 @@ class Queue {
         remote = await provider.submit(initial.modelId, initial.prompt);
         if (!remote || typeof remote.requestId !== 'string' || !remote.requestId) throw new Error('The provider accepted no usable request reference.');
       } catch (error) {
+        if (error.httpStatus === 429 && error.submissionUncertain !== true && this._deferAutomatic(initial.id, error)) return;
         if (error.pauseQueue === true || [401, 402, 403, 429].includes(error.httpStatus)) {
-          this.paused = true;
-          this._approved.clear();
+          this._hold();
         }
         this._update(initial.id, job => {
           const definitive = error.submissionUncertain === false || (Number.isInteger(error.httpStatus) && error.httpStatus >= 400 && error.httpStatus < 500 && error.httpStatus !== 408);
@@ -551,9 +676,9 @@ class Queue {
         return;
       }
       if (result.status === 'failed' || result.status === 'cancelled') {
+        if (result.status === 'failed' && result.quotaBlocked === true && this._deferAutomatic(current.id, result)) return;
         if (result.pauseQueue === true) {
-          this.paused = true;
-          this._approved.clear();
+          this._hold();
         }
         this._update(current.id, job => {
           job.status = result.status;
@@ -634,7 +759,7 @@ class Queue {
     if (job.videoPlan) this._validateStory(job);
     if (job.remoteVideoUrl) throw new Error('This video is already generated. Retry its download instead.');
     if (job.remote && job.status === 'needs_attention') throw new Error('This request can be resumed without another submission. Use Resume monitoring.');
-    if (this.store.snapshot().jobs.filter(item => ACTIVE.has(item.status)).length >= 400 && !ACTIVE.has(job.status)) throw new Error('The active queue is full.');
+    if (this.store.snapshot().jobs.filter(item => ACTIVE.has(item.status)).length >= ACTIVE_LIMIT && !ACTIVE.has(job.status)) throw new Error('The active queue is full.');
     this._approved.delete(id);
     this._update(id, item => {
       item.attempts = [...(item.attempts || []), { status: item.status, remote: item.remote || null, error: item.error || null, endedAt: now(), cancellation: item.cancellation || null }];
@@ -700,12 +825,14 @@ class Queue {
 
   async waitForIdle() { while (this._runner) await this._runner; }
 
-  async dispose() {
-    this.pause();
+  async dispose({ preserveAutomatic = false } = {}) {
+    if (this._disposed) return this.waitForIdle();
+    this._hold(preserveAutomatic);
     this._disposed = true;
+    this._emit();
     if (this._waitResolve) this._waitResolve();
     await this.waitForIdle();
   }
 }
 
-module.exports = { Queue, ACTIVE };
+module.exports = { Queue, ACTIVE, ACTIVE_LIMIT };
