@@ -995,3 +995,58 @@ test('production audio is prepared before the first submission and saved only af
   assert.deepEqual(sequence, ['prepare', 'prepare', 'submit', 'submit']);
   assert.equal(queue.snapshot().jobs[0].status, 'completed');
 });
+
+test('retry replans failed local preparation from the saved prompt before submitting any shot', async t => {
+  let plan = { ...storyPlan(), production: { autoNarration: true } };
+  const prompt = 'A whale story. No background music or narrator.';
+  const { queue, store, calls, dir } = storyFixture(t, {
+    planVideo: (modelId, source) => {
+      assert.equal(modelId, 'ltx2-story-free');
+      assert.equal(source, prompt);
+      return plan;
+    },
+    prepareVideo: async () => { throw new Error('Narration could not fit.'); },
+  });
+  const [job] = queue.addPrompts([prompt], 'ltx2-story-free', { autoExportDirectory: dir });
+  approve(queue);
+  await queue.waitForIdle();
+  const failed = store.snapshot();
+  assert.equal(failed.jobs[0].phase, 'prepare_failed');
+  assert.equal(calls.submit, 0);
+
+  plan = { ...storyPlan(), durationSeconds: 20 };
+  assert.throws(() => queue.retry(job.id), /plan is invalid/);
+  assert.deepEqual(store.snapshot(), failed, 'A failed replan leaves the saved queue untouched.');
+
+  plan = { ...storyPlan(), segments: storyPlan().segments.map(shot => ({ ...shot, prompt: `Updated: ${shot.prompt}` })) };
+  const [retried] = queue.retry(job.id).jobs;
+  assert.equal(retried.id, job.id);
+  assert.equal(retried.prompt, job.prompt);
+  assert.equal(retried.createdAt, job.createdAt);
+  assert.deepEqual(retried.autoExport, job.autoExport);
+  assert.deepEqual(retried.videoPlan, plan);
+  assert.deepEqual(retried.segments, plan.segments.map(shot => ({ ...shot, status: 'pending' })));
+  assert.equal(calls.submit, 0, 'Retry only prepares the selected prompt for approval.');
+  approve(queue);
+  await queue.waitForIdle();
+  assert.equal(calls.submit, 2);
+  assert.equal(queue.snapshot().jobs[0].status, 'completed');
+});
+
+test('retry preserves a saved shot even if local preparation is marked failed', async t => {
+  let planned = 0;
+  const { queue, store, dir } = storyFixture(t, { planVideo: () => { planned++; return storyPlan(); } });
+  const [job] = queue.addPrompts(['A whale story'], 'ltx2-story-free');
+  const videoPath = path.join(dir, 'saved-shot.mp4');
+  store.mutate(state => {
+    const saved = state.jobs[0];
+    saved.status = 'failed';
+    saved.phase = 'prepare_failed';
+    saved.segments[0].status = 'completed';
+    saved.segments[0].videoPath = videoPath;
+  });
+  const [retried] = queue.retry(job.id).jobs;
+  assert.equal(planned, 1);
+  assert.equal(retried.segments[0].videoPath, videoPath);
+  assert.equal(retried.segmentIndex, 1);
+});

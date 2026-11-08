@@ -12,7 +12,7 @@ const { writeMusic } = require('./music');
 
 function planStudioVideo(modelId, prompt) {
   const isFilm = modelId === 'ltx2-story-free';
-  const { visualPrompt, production } = parseProduction(prompt, { inferPortrait: isFilm });
+  const { visualPrompt, production } = parseProduction(prompt, { inferPortrait: isFilm, inferStoryboardAudio: isFilm });
   if (!production) return createVideoPlan(modelId, visualPrompt);
   if (!isFilm) throw new Error('Choose the 15–20 second film option for automatic framing, narration, sound, or music.');
   if ((production.narration || production.autoNarration) && !narrationAvailable()) throw new Error('The local narration engine needs the full Windows installer.');

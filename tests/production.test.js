@@ -55,3 +55,17 @@ test('music instructions plan a local score independently of ambience or speech'
   assert.equal(parseProduction('A cinematic scene.\nSound: ocean\nMusic: none').production.music, 'none');
   assert.throws(() => parseProduction('A boat.\nMusic: a specific song'), /Choose Music/);
 });
+
+test('a storyboard audio paragraph preserves sound while honoring an exclusion list', () => {
+  const prompt = 'Create an 18-second 9:16 video of an ocean blowhole.\n\nAUDIO:\nPowerful surf and a deep hollow boom. No background music or narrator.\n\nSTRICT REALISM:\nKeep the cliff shape consistent.';
+  const { visualPrompt, production } = parseProduction(prompt, { inferPortrait: true, inferStoryboardAudio: true });
+  assert.match(visualPrompt, /Keep the cliff shape consistent/);
+  assert.doesNotMatch(visualPrompt, /AUDIO:/);
+  assert.equal(production.autoNarration, false);
+  assert.equal(production.music, 'none');
+  assert.equal(production.sound, 'prompt');
+  assert.match(production.soundPrompt, /Powerful surf/);
+  assert.equal(parseProduction('An ocean video with no background music, subtitles, or scripted voiceover.').production, null);
+  assert.equal(parseProduction('An ocean video.\nAUDIO: No music or narrator.', { inferStoryboardAudio: true }).production, null);
+  assert.equal(parseProduction('An ocean video without music or a narrator.\nNarration: Read this.').production.narration, 'Read this.');
+});
