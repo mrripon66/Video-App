@@ -52,7 +52,7 @@ async function main() {
     page.on('pageerror', error => errors.push(error.message));
     await page.locator('#chat-feed').getByRole('button', { name: 'Make Reel', exact: true }).click();
     const reel = page.getByRole('dialog', { name: 'Make Reel' });
-    assert.equal(await reel.getByLabel('Framing').inputValue(), 'fit');
+    assert.equal(await reel.getByLabel('Framing').inputValue(), 'crop');
     assert.equal(await reel.locator('select[name="sound"]').inputValue(), 'rain');
     await reel.getByRole('button', { name: 'Save Reel' }).click();
     await page.waitForFunction(() => document.querySelector('.reel-dialog [type="submit"]')?.disabled === false);

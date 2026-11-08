@@ -18,15 +18,23 @@ test('Reels render vertical video with audible ambience or preserved source soun
   const output = path.join(directory, 'vertical.mp4');
   const executable = mediaExecutable();
   const ffmpeg = args => execFileSync(executable, ['-hide_banner', '-nostdin', ...args], { windowsHide: true, timeout: 30000 });
-  const fixture = ['-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=160x96:rate=24'];
+  const fixture = ['-v', 'error', '-f', 'lavfi', '-i',
+    'color=c=black:s=160x96:r=24,drawbox=x=76:y=0:w=8:h=ih:color=white:t=fill'];
   ffmpeg([...fixture, '-t', '2', '-c:v', 'libx264', '-an', silent]);
   ffmpeg([...fixture, '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=44100', '-t', '2', '-c:v', 'libx264', '-c:a', 'aac', tone]);
   const hash = filename => createHash('sha256').update(fs.readFileSync(filename)).digest('hex');
   const silentHash = hash(silent);
   const toneHash = hash(tone);
 
-  const withRain = await createReel({ source: silent, destination: output, framing: 'crop', sound: 'rain', executable });
+  const withRain = await createReel({ source: silent, destination: output, sound: 'rain', executable });
   assert.deepEqual(withRain, { durationSeconds: 2, width: 1080, height: 1920 });
+  function topPixels() {
+    const pixels = ffmpeg(['-v', 'error', '-i', output, '-vf', 'crop=2:2:540:0,format=gray',
+      '-frames:v', '1', '-f', 'rawvideo', '-']);
+    assert.equal(pixels.length, 4);
+    return pixels;
+  }
+  assert.ok(topPixels().every(pixel => pixel > 230), 'the default fills the top of the screen with the source shot');
   const audioSamples = () => ffmpeg(['-v', 'error', '-i', output, '-map', '0:a:0', '-f', 's16le', '-']);
   function assertAudio(samples) {
     assert.ok(Math.abs(samples.length / (48000 * 2 * 2) - 2) < 0.05, 'audio covers the original two seconds');
@@ -50,6 +58,7 @@ test('Reels render vertical video with audible ambience or preserved source soun
 
   const withOriginal = await createReel({ source: tone, destination: output, framing: 'fit', sound: 'none', overwrite: true, executable });
   assert.deepEqual(withOriginal, { durationSeconds: 2, width: 1080, height: 1920 });
+  assert.ok(topPixels().every(pixel => pixel < 192), 'explicit Fit keeps the blurred background above the source shot');
   assert.ok(audioSamples().some(byte => byte !== 0), 'original sound remains present after export');
   assert.notEqual(hash(output), rainHash);
   const originalOnly = audioSamples();

@@ -98,7 +98,7 @@ async function prepareMix({ args, staging, original, sound, soundPrompt, soundFi
   return { filters, audioMap: '[a]' };
 }
 
-async function createReel({ source, destination, framing = 'fit', sound = 'rain', soundPrompt = '', soundFile,
+async function createReel({ source, destination, framing = 'crop', sound = 'rain', soundPrompt = '', soundFile,
   narration = '', voice = 'warm', narrationFile, overwrite = false, executable = mediaExecutable() }) {
   if (typeof source !== 'string' || !/\.(mp4|webm)$/i.test(source) || typeof destination !== 'string' || !/\.mp4$/i.test(destination)) {
     throw new Error('Choose a local video and an MP4 export filename.');

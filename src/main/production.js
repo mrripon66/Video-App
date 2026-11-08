@@ -10,12 +10,25 @@ const { draftSoundPlan } = require('./script-writer');
 const { createReel } = require('./reel');
 
 function planStudioVideo(modelId, prompt) {
-  const { visualPrompt, production } = parseProduction(prompt);
+  const isFilm = modelId === 'ltx2-story-free';
+  const { visualPrompt, production } = parseProduction(prompt, { inferPortrait: isFilm });
   if (!production) return createVideoPlan(modelId, visualPrompt);
-  if (modelId !== 'ltx2-story-free') throw new Error('Choose the 15–20 second film option for automatic narration and sound.');
+  if (!isFilm) throw new Error('Choose the 15–20 second film option for automatic framing, narration, or sound.');
   if ((production.narration || production.autoNarration) && !narrationAvailable()) throw new Error('The local narration engine needs the full Windows installer.');
   if (production.sound === 'prompt' && !promptSoundAvailable()) throw new Error('Install the local prompt sound model, or choose Gentle rain, Ocean surf, or Quiet room.');
-  return { ...createVideoPlan(modelId, visualPrompt), production: { ...production, visualPrompt } };
+  const portrait = production.framing === 'crop';
+  const scene = portrait ? visualPrompt
+    .replace(/^[ \t]*(?:\*{1,2})?aspect ratio[ \t]*:(?:\*{1,2})?[ \t]*\d+[ \t]*:[ \t]*\d+[ \t]*\*{0,2}[ \t]*\r?$/gim, '')
+    .trim() : visualPrompt;
+  const plan = createVideoPlan(modelId, scene);
+  if (portrait) {
+    plan.orientation = 'portrait';
+    for (const shot of plan.segments) {
+      shot.prompt += '\nCompose vertically for a full-screen 9:16 Reel. Keep key subjects within the central portrait frame.';
+      if (shot.prompt.length > 10000) throw new Error('Shorten the prompt so each planned shot stays within 10,000 characters.');
+    }
+  }
+  return { ...plan, production: { ...production, visualPrompt } };
 }
 
 function createProduction({ directory, compose }) {

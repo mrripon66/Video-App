@@ -48,8 +48,9 @@ async function decodedDuration(filename, executable = mediaExecutable()) {
 function createComposer({ directory, executable = mediaExecutable() }) {
   const root = path.resolve(directory);
   const active = new Set();
-  return async function composeVideo({ jobId, segments, durationSeconds }) {
+  return async function composeVideo({ jobId, segments, durationSeconds, orientation }) {
     if (!/^[a-zA-Z0-9-]{1,100}$/.test(jobId || '') || !Array.isArray(segments) || segments.length !== 2 ||
+      (orientation !== undefined && orientation !== 'portrait') ||
       !Number.isFinite(durationSeconds) || durationSeconds < 15 || durationSeconds > 20 ||
       segments.some(segment => !Number.isFinite(segment.durationSeconds) || segment.durationSeconds < 1 || segment.durationSeconds > 10) ||
       Math.abs(segments.reduce((sum, segment) => sum + segment.durationSeconds, 0) - durationSeconds) > 0.001) {
@@ -74,7 +75,10 @@ function createComposer({ directory, executable = mediaExecutable() }) {
           throw new Error(`Shot ${index + 1} is shorter than requested (${actual.toFixed(2)} seconds). The app will not loop or stretch it to claim a longer video.`);
         }
       }
-      const filters = segments.map((segment, index) => `[${index}:v:0]scale=768:512:force_original_aspect_ratio=decrease,pad=768:512:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24,trim=duration=${segment.durationSeconds},setpts=PTS-STARTPTS[v${index}]`);
+      const framing = orientation === 'portrait'
+        ? 'scale=512:768:force_original_aspect_ratio=increase,crop=512:768'
+        : 'scale=768:512:force_original_aspect_ratio=decrease,pad=768:512:(ow-iw)/2:(oh-ih)/2';
+      const filters = segments.map((segment, index) => `[${index}:v:0]${framing},setsar=1,fps=24,trim=duration=${segment.durationSeconds},setpts=PTS-STARTPTS[v${index}]`);
       filters.push('[v0][v1]concat=n=2:v=1:a=0[out]');
       const args = ['-v', 'error', '-xerror', '-y', '-filter_complex_threads', '2'];
       for (const filename of inputs) args.push('-threads', '4', '-protocol_whitelist', 'file,pipe', '-i', filename);

@@ -43,6 +43,10 @@
   let lastModelsSignature = '';
   let lastWarning = '';
   let dictating = false;
+  let selectingVideos = false;
+  let savingLibraryZip = false;
+  let batchOutputDirectory = '';
+  const selectedVideoIds = new Set();
   const busyControls = new Set();
   const chatCache = new Map();
   const libraryCache = new Map();
@@ -387,7 +391,8 @@
     $('add-prompt').disabled = !selected?.available || count >= BATCH_LIMIT || !!state.automaticBatch;
     const batchSelected = state.models.find(model => model.id === $('batch-model').value);
     const lines = batchPrompts();
-    $('add-batch').disabled = !batchSelected?.available || lines.length === 0 || lines.length + count > BATCH_LIMIT || !!state.automaticBatch;
+    $('add-batch').disabled = !batchSelected?.available || lines.length === 0 || lines.length + count > BATCH_LIMIT ||
+      !!state.automaticBatch || busyControls.has($('choose-batch-folder'));
     $('batch-count').textContent = lines.length + (lines.length === 1 ? ' prompt' : ' prompts') + ' · ' + Math.max(0, BATCH_LIMIT - count) + ' spaces available';
     $('batch-count').classList.toggle('over-limit', lines.length + count > BATCH_LIMIT);
     $('narration-state').textContent = state.narrationAvailable ? 'English narration ready' : 'Narration needs the full installer';
@@ -400,7 +405,18 @@
     $('footer-state').textContent = state.paused
       ? 'Queue paused · ' + pending.length + ' waiting' + (active.length ? ' · ' + active.length + ' submitted' : '')
       : 'Queue running · ' + active.length + ' in progress · ' + pending.length + ' waiting';
+    renderBatchFolder();
     for (const control of busyControls) control.disabled = true;
+  }
+  function renderBatchFolder() {
+    const choosing = busyControls.has($('choose-batch-folder'));
+    const adding = busyControls.has($('add-batch'));
+    const folderNote = $('batch-save-folder');
+    const text = batchOutputDirectory || 'Optional. Save a copy of each finished video to a folder for this batch.';
+    if (folderNote.textContent !== text) folderNote.textContent = text;
+    $('choose-batch-folder').disabled = choosing || adding;
+    $('clear-batch-folder').hidden = !batchOutputDirectory;
+    $('clear-batch-folder').disabled = choosing || adding;
   }
   function renderEmptyChat() {
     const node = element('div', 'create-empty');
@@ -492,6 +508,27 @@
     }
     showToast(retryCopy(job));
   }
+  function autoExportNote(job) {
+    const output = job.autoExport;
+    if (!output || job.status !== 'completed') return null;
+    const note = element('div', 'job-auto-export');
+    const status = element('p', output.status === 'failed' ? 'job-error' : '');
+    status.title = output.directory;
+    if (output.status === 'saved') status.textContent = output.filePath ? 'Folder copy saved to ' + output.filePath : 'Copy saved to your batch folder.';
+    else if (output.status === 'pending') status.textContent = 'Waiting to save a copy to your batch folder.';
+    else if (output.status === 'failed') status.textContent = 'Could not save the folder copy.' + (output.error ? ' ' + output.error : '');
+    note.append(status);
+    if (output.status === 'failed') {
+      const actions = element('div', 'job-auto-export-actions');
+      actions.append(button('Retry folder save', () => bridge.retryAutoExport({ id: job.id })),
+        button('Choose a different folder', async () => {
+          const chosen = await bridge.chooseBatchFolder();
+          if (chosen?.directory) await bridge.retryAutoExport({ id: job.id, autoExportDirectory: chosen.directory });
+        }));
+      note.append(actions);
+    }
+    return note;
+  }
   function renderQueue(jobs) {
     if (!jobs.length) {
       $('queue-list').replaceChildren(emptyState('A clear queue. A fresh start.', 'Describe a video in Create and click Generate, or enter a batch above. Your prompts and results will appear here.'));
@@ -510,6 +547,8 @@
       if (job.error) details.append(element('p', 'job-error', job.error));
       if (job.cancellationError) details.append(element('p', 'job-error', job.cancellationError));
       if (job.cancellation === 'requested' && !job.cancellationError) details.append(element('p', 'job-error', 'Stop requested. Cancellation is not confirmed; the submitted request may still finish and use free GPU quota.'));
+      const outputNote = autoExportNote(job);
+      if (outputNote) details.append(outputNote);
       const actions = element('div', 'job-actions');
       if (job.status === 'pending' && isStory(job) && savedParts(job) > 0) actions.append(button('Continue', () => continueJob(job), 'play'));
       if (['failed', 'cancelled', 'needs_attention'].includes(job.status)) actions.append(button(retryLabel(job), () => retryJob(job)));
@@ -522,10 +561,66 @@
     });
     $('queue-list').replaceChildren(...rows);
   }
+  function renderLibrarySelection() {
+    const count = selectedVideoIds.size;
+    const hasVideos = libraryCache.size > 0;
+    $('library-select').hidden = selectingVideos;
+    $('library-select').disabled = !hasVideos;
+    $('library-selection').hidden = !selectingVideos;
+    for (const id of ['library-select-latest-20', 'library-select-latest-100', 'library-select-all']) {
+      $(id).disabled = !hasVideos || savingLibraryZip;
+    }
+    $('library-save-zip').disabled = $('library-clear-selection').disabled = !count || savingLibraryZip;
+    $('library-selection-done').disabled = savingLibraryZip;
+    const selectionText = savingLibraryZip ? 'Saving ZIP…' : count + (count === 1 ? ' video selected' : ' videos selected');
+    if ($('library-selection-count').textContent !== selectionText) $('library-selection-count').textContent = selectionText;
+    for (const [id, { checkbox }] of libraryCache) {
+      checkbox.parentElement.hidden = !selectingVideos;
+      checkbox.checked = selectedVideoIds.has(id);
+      checkbox.disabled = savingLibraryZip;
+    }
+  }
+  function selectLibraryVideos(limit) {
+    if (savingLibraryZip) return;
+    selectedVideoIds.clear();
+    if (limit > 0) {
+      const completedTime = job => Date.parse(job.completedAt) || Date.parse(job.createdAt) || 0;
+      const newest = state.jobs.filter(job => libraryCache.has(job.id)).sort((a, b) => completedTime(b) - completedTime(a));
+      for (const job of newest.slice(0, limit)) selectedVideoIds.add(job.id);
+    }
+    $('library-zip-error').hidden = true;
+    renderLibrarySelection();
+  }
+  async function saveLibraryZip() {
+    if (savingLibraryZip || !selectedVideoIds.size) return;
+    const ids = Array.from(selectedVideoIds);
+    const errorNote = $('library-zip-error');
+    errorNote.hidden = true;
+    savingLibraryZip = true;
+    renderLibrarySelection();
+    try {
+      const result = await bridge.exportZip({ ids });
+      if (result?.saved) showToast('ZIP saved with ' + result.count + (result.count === 1 ? ' video.' : ' videos.'));
+    } catch (error) {
+      errorNote.hidden = false;
+      errorNote.textContent = errorMessage(error);
+    } finally {
+      savingLibraryZip = false;
+      renderLibrarySelection();
+      if (view === 'library' && document.activeElement === document.body) {
+        const save = $('library-save-zip');
+        (save.disabled ? $('library-selection-done') : save).focus();
+      }
+    }
+  }
   function renderLibrary(jobs) {
     const complete = jobs.filter(job => job.status === 'completed' && job.videoPath);
+    const completeIds = new Set(complete.map(job => job.id));
+    for (const id of libraryCache.keys()) if (!completeIds.has(id)) libraryCache.delete(id);
+    for (const id of selectedVideoIds) if (!completeIds.has(id)) selectedVideoIds.delete(id);
     if (!complete.length) {
       $('library-grid').replaceChildren(emptyState('Your story collection starts here.', 'Completed videos will appear here after they have been downloaded from your provider. Add your first prompt in Create.', 'film'));
+      renderLibrarySelection();
       return;
     }
     const cards = complete.map(job => {
@@ -534,7 +629,20 @@
       if (cached?.signature === signature) return cached.node;
       const card = element('article', 'video-card');
       const body = element('div', 'video-card-body');
-      const prompt = element('p', 'job-prompt', job.title || job.prompt); prompt.title = job.prompt;
+      const title = job.title || job.prompt;
+      const prompt = element('p', 'job-prompt', title); prompt.title = job.prompt;
+      const checkbox = element('input');
+      checkbox.type = 'checkbox';
+      const selectionLabel = title?.length > 120 ? title.slice(0, 117) + '…' : title;
+      checkbox.setAttribute('aria-label', 'Select for ZIP: ' + (selectionLabel || 'Video'));
+      checkbox.addEventListener('change', () => {
+        if (checkbox.checked) selectedVideoIds.add(job.id);
+        else selectedVideoIds.delete(job.id);
+        $('library-zip-error').hidden = true;
+        renderLibrarySelection();
+      });
+      const selection = element('label', 'video-zip-selection');
+      selection.append(checkbox, document.createTextNode('Select for ZIP'));
       const meta = element('div', 'job-meta'); meta.append(element('span', '', modelName(job.modelId)), element('span', '', timeLabel(job.createdAt)));
       meta.append(durationBadge(job));
       const footer = element('div', 'video-card-footer');
@@ -543,11 +651,11 @@
       }, 'download'));
       body.append(prompt, meta);
       if (isStory(job)) body.append(element('p', 'story-library-note', 'Two separate AI shots joined into one edited video.'));
-      body.append(footer); card.append(makeVideo(job), body);
-      libraryCache.set(job.id, { signature, node: card }); return card;
+      body.append(footer); card.append(selection, makeVideo(job), body);
+      libraryCache.set(job.id, { signature, node: card, checkbox }); return card;
     });
-    for (const id of libraryCache.keys()) if (!complete.some(job => job.id === id)) libraryCache.delete(id);
     syncChildren($('library-grid'), cards);
+    renderLibrarySelection();
   }
   function render() {
     renderModels(); renderStatus();
@@ -615,6 +723,24 @@
   $('top-settings').addEventListener('click', () => { setView('settings'); renderStatus(); });
   $('connect-provider').addEventListener('click', () => { setView('settings'); renderStatus(); $('open-provider').focus(); });
   $('footer-queue').addEventListener('click', () => { setView('queue'); renderStatus(); });
+  $('library-select').addEventListener('click', () => {
+    selectingVideos = true;
+    renderLibrarySelection();
+    $('library-select-latest-20').focus();
+  });
+  $('library-select-latest-20').addEventListener('click', () => selectLibraryVideos(20));
+  $('library-select-latest-100').addEventListener('click', () => selectLibraryVideos(100));
+  $('library-select-all').addEventListener('click', () => selectLibraryVideos(libraryCache.size));
+  $('library-clear-selection').addEventListener('click', () => {
+    selectLibraryVideos(0);
+    $('library-select-latest-20').focus();
+  });
+  $('library-selection-done').addEventListener('click', () => {
+    selectingVideos = false;
+    selectLibraryVideos(0);
+    $('library-select').focus();
+  });
+  $('library-save-zip').addEventListener('click', () => { void saveLibraryZip(); });
   $('prompt-input').addEventListener('input', updatePromptLength);
   $('prompt-input').addEventListener('keydown', event => {
     if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); $('prompt-form').requestSubmit(); }
@@ -635,12 +761,29 @@
   $('create-model').addEventListener('change', renderStatus);
   $('batch-model').addEventListener('change', renderStatus);
   $('batch-input').addEventListener('input', renderStatus);
+  $('choose-batch-folder').addEventListener('click', () => action(async () => {
+    renderStatus();
+    const chosen = await bridge.chooseBatchFolder();
+    if (chosen?.directory) batchOutputDirectory = chosen.directory;
+  }, $('choose-batch-folder')));
+  $('clear-batch-folder').addEventListener('click', () => {
+    batchOutputDirectory = '';
+    renderBatchFolder();
+    $('choose-batch-folder').focus();
+  });
   $('add-batch').addEventListener('click', () => action(async () => {
+    renderBatchFolder();
     const prompts = batchPrompts();
     if (!prompts.length) throw new Error('Enter at least one prompt, one per line.');
     if (prompts.some(prompt => prompt.length > 10000)) throw new Error('Each prompt must be 10,000 characters or fewer.');
     ensureFreeReady();
-    const result = await bridge.addPrompts({ prompts, modelId: $('batch-model').value });
+    const input = { prompts, modelId: $('batch-model').value };
+    if (batchOutputDirectory) input.autoExportDirectory = batchOutputDirectory;
+    const result = await bridge.addPrompts(input);
+    if (result?.addedJobIds?.length) {
+      batchOutputDirectory = '';
+      renderBatchFolder();
+    }
     $('batch-input').value = '';
     await startAddedPrompts(result, true);
     showToast(prompts.length + (prompts.length === 1 ? ' prompt started.' : ' prompts started.') + ' The batch waits for confirmed free GPU allowance resets.');

@@ -1,6 +1,6 @@
 {
   "name": "ai-video-studio",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Generate videos directly with verified free shared GPU models.",
   "author": "mrripon66",
   "license": "MIT",
@@ -67,7 +67,9 @@
       {
         "from": "resources/narration",
         "to": "narration",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {
@@ -86,5 +88,8 @@
       "createStartMenuShortcut": true,
       "deleteAppDataOnUninstall": false
     }
+  },
+  "dependencies": {
+    "yazl": "3.3.1"
   }
 }

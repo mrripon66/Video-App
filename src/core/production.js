@@ -7,7 +7,7 @@ const PRESETS = new Map([
   ['quiet room', 'room'], ['room tone', 'room'],
 ]);
 const FRAMINGS = new Map([
-  ['reel', 'fit'], ['vertical', 'fit'], ['9:16', 'fit'], ['fit', 'fit'],
+  ['reel', 'crop'], ['vertical', 'crop'], ['9:16', 'crop'], ['fit', 'fit'],
   ['crop', 'crop'], ['vertical crop', 'crop'], ['original', 'source'], ['landscape', 'source'],
 ]);
 
@@ -16,7 +16,7 @@ function unquote(text) {
   return pairs.some(([left, right]) => text.startsWith(left) && text.endsWith(right)) ? text.slice(1, -1).trim() : text;
 }
 
-function parseProduction(prompt) {
+function parseProduction(prompt, { inferPortrait = false } = {}) {
   const matches = [...prompt.matchAll(DIRECTIVE)];
   const visualPrompt = prompt.slice(0, matches[0]?.index ?? prompt.length).trim();
   const values = {};
@@ -47,8 +47,9 @@ function parseProduction(prompt) {
   if (soundPrompt.length > 500) throw new Error('Keep the sound description to 500 characters or fewer.');
 
   const framing = FRAMINGS.get((values.format || 'reel').toLowerCase());
-  if (!framing) throw new Error('Choose Format: reel, Format: crop, or Format: original.');
-  if (!matches.length && !autoNarration && !autoSound) return { visualPrompt, production: null };
+  if (!framing) throw new Error('Choose Format: reel, Format: fit, or Format: original.');
+  const portraitCue = inferPortrait && /\b(?:vertical (?:reel|video|clip|film|short)|9\s*:\s*16)\b/i.test(visualPrompt);
+  if (!matches.length && !autoNarration && !autoSound && !portraitCue) return { visualPrompt, production: null };
   return { visualPrompt, production: { framing, voice, narration, autoNarration, sound, soundPrompt, autoSound } };
 }
 
