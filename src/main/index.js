@@ -9,6 +9,7 @@ const { Store } = require('../core/store');
 const { Queue } = require('../core/queue');
 const { FREE_MODELS, FreeProvider } = require('../core/free-provider');
 const { MODELS, PUBLIC_MODELS, MODEL_ALIASES } = require('../core/catalog');
+const { MUSIC_PRESETS } = require('../core/music-styles');
 const { downloadVideo } = require('./download');
 const { createComposer } = require('./compose');
 const { createReel } = require('./reel');
@@ -229,10 +230,11 @@ function boot() {
     });
     handle('makeReel', async input => {
       if (exportingReel) throw new Error('A Reel is already being saved.');
-      const { id, framing, sound, soundPrompt = '', narration = '', voice = 'warm' } = input || {};
+      const { id, framing, sound, soundPrompt = '', narration = '', voice = 'warm', music = 'none' } = input || {};
       if (!['fit', 'crop'].includes(framing) || (sound !== 'none' && sound !== 'prompt' && !Object.hasOwn(SOUND_PRESETS, sound))) {
         throw new Error('Choose a framing and a sound for the Reel.');
       }
+      if (music !== 'none' && !Object.hasOwn(MUSIC_PRESETS, music)) throw new Error('Choose a music style for the Reel.');
       if (typeof narration !== 'string' || narration.length > 700 || !Object.hasOwn(NARRATION_VOICES, voice)) throw new Error('Enter a short script and choose a voice.');
       if (narration.trim() && !narrationAvailable()) throw new Error('The offline narration engine is unavailable.');
       if (sound === 'prompt' && (typeof soundPrompt !== 'string' || !soundPrompt.trim() || soundPrompt.length > 500 || !promptSoundAvailable())) throw new Error('Set up the local sound model and enter a short sound description.');
@@ -250,7 +252,7 @@ function boot() {
           throw new Error('Choose a save folder outside the studio’s video library.');
         }
         const destination = path.join(parent, path.basename(result.filePath));
-        await createReel({ source, destination, framing, sound, soundPrompt, narration: narration.trim(), voice, overwrite: true });
+        await createReel({ source, destination, framing, sound, soundPrompt, narration: narration.trim(), voice, music, musicSeed: job.id, overwrite: true });
         const reelId = randomUUID();
         const videoPath = path.join(mediaDir, reelId + '.mp4');
         const timestamp = new Date().toISOString();

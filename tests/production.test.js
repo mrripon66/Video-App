@@ -41,3 +41,17 @@ test('Reel requests plan portrait shots and an explicit fit keeps the whole land
   assert.equal(fit.orientation, undefined);
   assert.equal(fit.production.framing, 'fit');
 });
+
+test('music instructions plan a local score independently of ambience or speech', () => {
+  const plan = planStudioVideo('ltx2-story-free', 'A 20-second walk through a foggy forest. | Sound: quiet room | Music: gentle piano | Format: reel');
+  assert.equal(plan.production.music, 'calm');
+  assert.equal(plan.production.sound, 'room');
+  assert.equal(plan.production.narration, '');
+  assert.equal(plan.durationSeconds, 20);
+  assert.ok(plan.segments.every(shot => !shot.prompt.includes('Music:')));
+  assert.equal(parseProduction('A playful scene with background music.').production.music, 'upbeat');
+  assert.equal(parseProduction('An ominous trail.\nMusic: auto').production.music, 'suspense');
+  assert.equal(parseProduction('A car drives away without background music.').production, null);
+  assert.equal(parseProduction('A cinematic scene.\nSound: ocean\nMusic: none').production.music, 'none');
+  assert.throws(() => parseProduction('A boat.\nMusic: a specific song'), /Choose Music/);
+});

@@ -35,7 +35,10 @@
             <div class="composer-topline"><label for="prompt-input">YOUR PROMPT</label><span id="prompt-length">0 / 10,000</span></div>
             <textarea id="prompt-input" maxlength="10000" placeholder="A slow cinematic shot of a quiet coastal village at sunrise. Warm light, gentle waves, soft film grain…" rows="3" required></textarea>
             <div id="create-model-details" class="model-details" aria-live="polite"></div>
-            <div id="story-duration-hint" class="story-duration-hint" hidden><strong>15 seconds by default.</strong> For 20 seconds, include “20 seconds” in your prompt. Two separate AI shots are joined into one video. Add <strong>Format: reel</strong> for full-screen vertical video or <strong>Format: original</strong> for landscape. Add <strong>Narration: auto</strong> or the words to read, and <strong>Sound: rain against a kitchen window</strong> on separate lines.</div>
+            <div id="story-duration-hint" class="story-duration-hint" hidden>
+              <strong>15 seconds by default.</strong> For 20 seconds, include “20 seconds” in your prompt. Two separate AI shots are joined into one video. Add <strong>Format: reel</strong> for full-screen vertical video or <strong>Format: original</strong> for landscape.
+              <br>Add <strong>Narration: auto</strong> or the words to read, <strong>Sound: rain against a kitchen window</strong>, and <strong>Music: calm</strong> on separate lines. Music styles include calm, cinematic, upbeat, and suspense. Use <strong>Music: auto</strong> to let the app pick a style or <strong>Music: none</strong> to skip it.
+            </div>
             <div id="animatediff-duration-hint" class="story-duration-hint" hidden><strong>Short animation: 1.6 seconds.</strong> AnimateDiff Lightning makes a fixed-length clip; choose the edited-video model for 15–20 seconds.</div>
             <div class="composer-toolbar"><div class="composer-tools"><label class="model-selector"><span data-icon="sparkles"></span><span class="sr-only">Video model</span><select id="create-model" aria-label="Video model"></select></label><span class="toolbar-divider"></span><button type="button" class="voice-button" id="voice-button" title="Dictate with Windows speech recognition"><span data-icon="mic"></span><span id="voice-label">Voice prompt</span></button></div><button class="primary-button" type="submit" id="add-prompt">Generate <span data-icon="arrow-right"></span></button></div>
           </form>
@@ -45,7 +48,7 @@
           <div class="page-heading"><div><div class="eyebrow">ONE IDEA OR FIVE HUNDRED</div><h1>Batch queue</h1><p>Generate one video at a time. An automatic batch waits for confirmed free allowance resets while the app is running.</p></div><div class="heading-actions"><button class="secondary-button" id="pause-queue"><span data-icon="pause"></span>Pause queue</button><button class="primary-button" id="review-queue"><span data-icon="play"></span>Start queue</button></div></div>
           <div class="stats-grid"><div class="stat-card"><span>In queue</span><strong id="stat-pending">0</strong><small>Waiting to generate</small></div><div class="stat-card"><span>In progress</span><strong id="stat-active">0</strong><small id="queue-state">Queue is paused</small></div><div class="stat-card"><span>Completed</span><strong id="stat-completed">0</strong><small>Saved to your library</small></div><div class="stat-card"><span>Needs a look</span><strong id="stat-failed">0</strong><small>See details or retry</small></div></div>
           <div class="batch-panel">
-            <div class="panel-heading"><div><h2>Generate a batch</h2><p>Save up to 500 active prompts, one per line. Separate narration and sound instructions with |.</p></div><button class="text-button" id="import-prompts"><span data-icon="upload"></span>Import .txt</button></div>
+            <div class="panel-heading"><div><h2>Generate a batch</h2><p>Save up to 500 active prompts, one per line. Separate narration, sound, and music instructions with |.</p></div><button class="text-button" id="import-prompts"><span data-icon="upload"></span>Import .txt</button></div>
             <label class="sr-only" for="batch-input">Batch prompts, one per line</label><textarea id="batch-input" rows="4" placeholder="A paper boat floating down a rain-soaked city street…&#10;A sunlit greenhouse filled with towering tropical plants…&#10;A wide aerial shot of rolling green hills at golden hour…"></textarea>
             <div class="batch-folder">
               <div><strong>Automatic save folder</strong><p id="batch-save-folder" role="status">Optional. Save a copy of each finished video to a folder for this batch.</p></div>
@@ -88,7 +91,7 @@
           <div class="page-heading"><div><div class="eyebrow">FREE MEANS FREE</div><h1>Studio settings</h1><p>No API key, payment card, subscription, or paid fallback.</p></div></div>
           <div class="settings-columns"><div><section id="provider-panel" class="settings-panel"><div class="panel-heading"><div><span class="provider-logo">HF</span><h2 id="provider-name">Hugging Face ZeroGPU</h2><p id="provider-description">Free shared GPUs with daily quotas and queues.</p></div><span id="provider-state" class="status-badge">Loading</span></div><div class="free-provider-points"><span class="outline-pill"><span data-icon="check"></span>No API key</span><span class="outline-pill"><span data-icon="shield"></span>No paid fallback</span><span class="outline-pill"><span data-icon="cloud"></span>Anonymous access</span></div><h3 class="quota-heading">A free allowance, not unlimited generation</h3><p id="free-quota-note" class="field-help">Hugging Face currently lists about 2 minutes of GPU time per day for anonymous visitors, and 5 minutes for a free account. This app uses anonymous access; it does not connect an account. Limits, shared queues, and Space availability can change.</p><p class="field-help">GPU time is the provider’s compute allowance, not the length of your video. A batch of 500 prompts may take substantially longer than a few days. Automatic batches wait for confirmed quota refusals.</p><p class="field-help">Opening the Space in a browser lets you check its current status. A browser login does not sign this desktop app in.</p><div class="settings-buttons"><button id="open-provider" class="secondary-button" type="button">Open free provider <span data-icon="arrow-right"></span></button></div></section><div class="settings-panel voice-panel"><span class="feature-icon" data-icon="mic"></span><div><h2>Voice prompts</h2><p id="voice-description">Speak a prompt and edit the text before generating.</p><p class="field-help">Voice is transcribed locally with Windows speech or the included offline Whisper model. No provider credits or speech language download is needed.</p></div></div></div><aside class="settings-sidecard"><span class="feature-icon" data-icon="shield"></span><h2>Always in your hands.</h2><p>An automatic batch resumes when you reopen the studio. Pause ends its schedule.</p><ul><li>Click Generate to start your prompt directly.</li><li>Only free providers are enabled. There is no automatic purchase or paid overage.</li><li>Pausing stops new submissions. A request already sent may still use free GPU quota.</li><li>Your queue and downloaded videos are saved on this PC. Submitted prompts are sent to the selected Hugging Face Space.</li></ul></aside></div>
           <div class="section-title"><h2>Video models</h2><span class="muted-small">Free-only availability · quota and queues apply</span></div><div id="models-list" class="models-list"></div>
-          <section class="settings-panel"><h2>Local audio</h2><p id="narration-state">Checking narration…</p><p id="prompt-sound-state">Checking sound generation…</p><p class="field-help">KittenTTS Mini reads English scripts. The local Ollama model can draft a short script from the scene. Effects and ambience from descriptions are Powered by Stability AI.</p></section>
+          <section class="settings-panel"><h2>Local audio</h2><p id="narration-state">Checking narration…</p><p id="prompt-sound-state">Checking sound generation…</p><p class="field-help">The studio can read English narration and add instrumental background music on this PC. The local Ollama model can draft a short script from the scene. Effects and ambience from descriptions are Powered by Stability AI.</p></section>
         </section>
       </main>
       <footer class="workspace-footer"><span><span class="footer-dot"></span><span id="footer-state">Loading workspace…</span></span><button id="footer-queue" class="text-button">Open queue <span aria-hidden="true">↗</span></button></footer>
@@ -115,13 +118,22 @@
               <option value="none">Original sound only</option>
             </select>
           </label>
+          <label>Background music
+            <select name="music">
+              <option value="none">No added music</option>
+              <option value="calm">Calm</option>
+              <option value="cinematic">Cinematic</option>
+              <option value="upbeat">Upbeat</option>
+              <option value="suspense">Suspenseful</option>
+            </select>
+          </label>
         </div>
         <label class="reel-text-field" data-sound-description hidden>Sound description<textarea name="soundPrompt" rows="2" maxlength="500" placeholder="Rain on a window and a quiet wooden door closing"></textarea></label>
         <div data-narration-fields class="reel-narration-fields">
           <label class="reel-text-field">Narration, optional<textarea name="narration" rows="3" maxlength="700" placeholder="Enter the words you want the voice to read"></textarea></label>
           <label class="reel-text-field">Voice<select name="voice"><option value="warm">Warm English voice</option><option value="clear">Clear English voice</option></select></label>
         </div>
-        <p class="reel-note">The app adds sound for free on this PC.</p>
+        <p class="reel-note">The app adds narration, sound, and background music for free on this PC.</p>
         <p class="reel-status" role="status" hidden></p>
         <div class="dialog-actions">
           <button class="secondary-button" type="button" data-reel-close>Cancel</button>

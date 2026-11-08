@@ -40,6 +40,12 @@ async function main() {
     assert.equal(info.version, require('../package.json').version);
     assert.equal(await page.evaluate(() => typeof window.studio.makeReel), 'function');
     assert.equal(await page.evaluate(async () => (await window.studio.snapshot()).narrationAvailable), true);
+    const installedNarration = await application.evaluate(({ app }) => {
+      const path = process.getBuiltinModule('path');
+      const requirePackaged = process.getBuiltinModule('module').createRequire(path.join(app.getAppPath(), 'package.json'));
+      return requirePackaged('./src/main/narration.js').narrationEngine();
+    });
+    assert.equal(installedNarration, 'kokoro', 'The installer includes the upgraded voice model.');
     assert.equal(await page.evaluate(() => typeof require), 'undefined');
     const state = await page.evaluate(() => window.studio.snapshot());
     assert.equal(state.paused, true);

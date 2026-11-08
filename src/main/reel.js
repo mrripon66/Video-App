@@ -5,6 +5,8 @@ const { mediaExecutable, runMedia } = require('./compose');
 const { SOUND_PRESETS, writeSoundtrack } = require('./sound');
 const { writeNarration } = require('./narration');
 const { writePromptSound } = require('./prompt-sound');
+const { MUSIC_PRESETS } = require('../core/music-styles');
+const { writeMusic } = require('./music');
 
 const WIDTH = 1080;
 const HEIGHT = 1920;
@@ -54,18 +56,20 @@ function videoFilter(framing) {
   ].join(';');
 }
 
-async function prepareMix({ args, staging, original, sound, soundPrompt, soundFile, narration, voice, narrationFile }) {
+async function prepareMix({ args, staging, original, sound, soundPrompt, soundFile, narration, voice, narrationFile, music, musicFile, musicSeed }) {
   const filters = [];
   const tracks = [];
   const duration = original.durationSeconds;
   const hasNarration = !!(narration || narrationFile);
+  const hasMusic = music !== 'none';
   let input = 1;
   function addWav(filename) {
     args.push('-f', 'wav', '-protocol_whitelist', 'file,pipe', '-i', filename);
     return `[${input++}:a:0]`;
   }
   if (original.audio) {
-    filters.push(`[0:a:0]aresample=48000:async=1:first_pts=0,aformat=channel_layouts=stereo,apad,atrim=duration=${duration}[original]`);
+    const output = hasMusic && !hasNarration ? ',asplit=2[original][music-key]' : '[original]';
+    filters.push(`[0:a:0]aresample=48000:async=1:first_pts=0,aformat=channel_layouts=stereo,apad,atrim=duration=${duration}${output}`);
     tracks.push({ label: '[original]', gain: hasNarration ? 0.18 : sound === 'none' ? 1 : 0.9 });
   }
   if (sound !== 'none') {
@@ -86,8 +90,17 @@ async function prepareMix({ args, staging, original, sound, soundPrompt, soundFi
       const rendered = await writeNarration({ filename, text: narration, voice });
       if (rendered.durationSeconds + 0.25 > duration) throw new Error(`The narration is ${rendered.durationSeconds.toFixed(1)} seconds. Shorten it to fit this ${duration.toFixed(1)}-second video.`);
     }
-    filters.push(`${addWav(filename)}loudnorm=I=-16:TP=-2:LRA=9,aresample=48000,aformat=channel_layouts=stereo,adelay=200:all=1,apad,atrim=duration=${duration}[narrator]`);
+    const output = hasMusic ? ',asplit=2[narrator][music-key]' : '[narrator]';
+    filters.push(`${addWav(filename)}loudnorm=I=-16:TP=-2:LRA=9,aresample=48000,aformat=channel_layouts=stereo,adelay=200:all=1,apad,atrim=duration=${duration}${output}`);
     tracks.push({ label: '[narrator]', gain: 1 });
+  }
+  if (hasMusic) {
+    const filename = musicFile || path.join(staging, 'music.wav');
+    if (!musicFile) await writeMusic({ filename, style: music, durationSeconds: Math.max(1, duration), seed: musicSeed });
+    const duck = hasNarration || !!original.audio;
+    filters.push(`${addWav(filename)}loudnorm=I=-23:TP=-3:LRA=9,aresample=48000,aformat=channel_layouts=stereo,apad,atrim=duration=${duration}${duck ? '[score]' : '[music]'}`);
+    if (duck) filters.push('[score][music-key]sidechaincompress=threshold=0.035:ratio=6:attack=35:release=400:makeup=1[music]');
+    tracks.push({ label: '[music]', gain: duck ? 0.7 : 1 });
   }
   if (!tracks.length) return { filters, audioMap: null };
   if (tracks.length === 1 && tracks[0].label === '[original]') return { filters, audioMap: '[original]' };
@@ -99,12 +112,13 @@ async function prepareMix({ args, staging, original, sound, soundPrompt, soundFi
 }
 
 async function createReel({ source, destination, framing = 'crop', sound = 'rain', soundPrompt = '', soundFile,
-  narration = '', voice = 'warm', narrationFile, overwrite = false, executable = mediaExecutable() }) {
+  narration = '', voice = 'warm', narrationFile, music = 'none', musicFile, musicSeed, overwrite = false, executable = mediaExecutable() }) {
   if (typeof source !== 'string' || !/\.(mp4|webm)$/i.test(source) || typeof destination !== 'string' || !/\.mp4$/i.test(destination)) {
     throw new Error('Choose a local video and an MP4 export filename.');
   }
   if (!['fit', 'crop', 'source'].includes(framing) || typeof sound !== 'string' ||
-    (sound !== 'none' && sound !== 'prompt' && !Object.hasOwn(SOUND_PRESETS, sound)) || typeof overwrite !== 'boolean') {
+    (sound !== 'none' && sound !== 'prompt' && !Object.hasOwn(SOUND_PRESETS, sound)) ||
+    (music !== 'none' && !Object.hasOwn(MUSIC_PRESETS, music)) || typeof overwrite !== 'boolean') {
     throw new Error('Choose a valid Reel framing and soundtrack.');
   }
   const input = await fs.realpath(source);
@@ -130,7 +144,7 @@ async function createReel({ source, destination, framing = 'crop', sound = 'rain
     staging = await fs.mkdtemp(path.join(parent, '.studio-reel-'));
     const encoded = path.join(staging, 'reel.mp4');
     const args = ['-v', 'error', '-xerror', '-n', '-filter_complex_threads', '2', ...INPUT_VIDEO, '-i', input];
-    const mix = await prepareMix({ args, staging, original, sound, soundPrompt, soundFile, narration, voice, narrationFile });
+    const mix = await prepareMix({ args, staging, original, sound, soundPrompt, soundFile, narration, voice, narrationFile, music, musicFile, musicSeed });
     args.push('-filter_complex', [videoFilter(framing), ...mix.filters].join(';'), '-map', '[v]');
     if (mix.audioMap) args.push('-map', mix.audioMap);
     args.push('-map_metadata', '-1', '-map_chapters', '-1', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '19', '-profile:v', 'high',
@@ -174,6 +188,7 @@ async function createReel({ source, destination, framing = 'crop', sound = 'rain
     if (staging) {
       await fs.unlink(path.join(staging, 'sound.wav')).catch(() => {});
       await fs.unlink(path.join(staging, 'narration.wav')).catch(() => {});
+      await fs.unlink(path.join(staging, 'music.wav')).catch(() => {});
       await fs.unlink(path.join(staging, 'reel.mp4')).catch(() => {});
       await fs.rmdir(staging).catch(() => {});
     }

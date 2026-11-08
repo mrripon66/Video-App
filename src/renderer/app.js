@@ -191,7 +191,7 @@
     form.addEventListener('submit', async event => {
       event.preventDefault();
       if (exporting) return;
-      const { framing, sound, soundPrompt, narration, voice } = form.elements;
+      const { framing, sound, soundPrompt, narration, voice, music } = form.elements;
       exporting = true;
       controls.forEach(control => { control.disabled = true; });
       status.hidden = false;
@@ -200,7 +200,7 @@
       submit.textContent = 'Saving…';
       try {
         const result = await bridge.makeReel({ id: job.id, framing: framing.value, sound: sound.value,
-          soundPrompt: soundPrompt.value.trim(), narration: narration.value.trim(), voice: voice.value });
+          soundPrompt: soundPrompt.value.trim(), narration: narration.value.trim(), voice: voice.value, music: music.value });
         if (result?.saved) {
           dialog.close();
           showToast('Reel saved.');
@@ -434,7 +434,7 @@
     return node;
   }
   function jobDescription(job) {
-    if (job.phase === 'preparing') return 'Preparing narration and sound on this PC.';
+    if (job.phase === 'preparing') return 'Preparing audio on this PC.';
     if (isStory(job)) {
       if (job.status === 'completed') return 'Your edited video is ready and saved on this PC. It joins two separately generated AI shots.';
       if (job.phase === 'composing') return 'Both AI shots are downloaded. Joining them into your final edited video.';
