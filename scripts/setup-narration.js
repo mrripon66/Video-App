@@ -14,11 +14,14 @@ const resources = path.join(root, 'resources', 'narration');
 const release = 'https://github.com/k2-fsa/sherpa-onnx/releases/download';
 const runtimeStem = 'sherpa-onnx-v2.0.1-win-x64-shared-MT-Release';
 const modelStem = 'kitten-mini-en-v0_8';
+const kokoroStem = 'kokoro-int8-multi-lang-v1_0';
 const assets = {
   runtime: { filename: `${runtimeStem}.tar.bz2`, url: `${release}/v2.0.1/${runtimeStem}.tar.bz2`, size: 26664192,
     sha256: 'dc703575a68594435f53dec93df775ff4913af851a196c0537163f21d8d2364e' },
   model: { filename: `${modelStem}.tar.bz2`, url: `${release}/tts-models/${modelStem}.tar.bz2`, size: 67547594,
     sha256: '518f9b130320f690d5b5476df77bde4215fca67773cda16710318e5081234b9d' },
+  kokoro: { filename: `${kokoroStem}.tar.bz2`, url: `${release}/tts-models/${kokoroStem}.tar.bz2`, size: 132353410,
+    sha256: '72c347230107ef8a31098ec4d468a605244beef5f1ed00db97efa13518800653' },
   lexicon: { filename: 'lexicon-en-us.txt', url: `${release}/tts-models/lexicon-en-us.txt`, size: 6305773,
     sha256: '8b67ae549a465eee78f92ecb74644ad90c3c58ce65f19c68baf85878a10ef73a' },
   sherpaLicense: { filename: 'sherpa-LICENSE.txt', url: 'https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/v2.0.1/LICENSE', size: 11358,
@@ -51,27 +54,35 @@ async function download(asset) {
 async function setupNarration() {
   if (process.platform !== 'win32' || process.arch !== 'x64') throw new Error('Bundled narration is built for Windows x64.');
   fs.mkdirSync(cache, { recursive: true });
-  const [runtime, model, lexicon, ...licenses] = await Promise.all(Object.values(assets).map(download));
+  const [runtime, model, kokoro, lexicon, ...licenses] = await Promise.all(Object.values(assets).map(download));
   const staging = fs.mkdtempSync(path.join(cache, 'stage-'));
   try {
     const tar = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
     for (const archive of [runtime, model]) execFileSync(tar, ['-xf', archive, '-C', staging], { windowsHide: true, timeout: 120000 });
-    for (const folder of ['bin', 'model', 'licenses']) fs.mkdirSync(path.join(resources, folder), { recursive: true });
+    const kokoroFiles = ['model.int8.onnx', 'voices.bin', 'tokens.txt', 'lexicon-us-en.txt'];
+    execFileSync(tar, ['-xf', kokoro, '-C', staging, ...[...kokoroFiles, 'LICENSE'].map(name => `${kokoroStem}/${name}`)],
+      { windowsHide: true, timeout: 120000 });
+    for (const folder of ['bin', 'model', 'kokoro', 'licenses']) fs.mkdirSync(path.join(resources, folder), { recursive: true });
     const engineFiles = ['sherpa-onnx-offline-tts.exe', 'onnxruntime.dll', 'onnxruntime_providers_shared.dll'];
     for (const filename of engineFiles) fs.copyFileSync(path.join(staging, runtimeStem, 'bin', filename), path.join(resources, 'bin', filename));
     for (const filename of ['model.onnx', 'voices.bin', 'tokens.txt']) {
       fs.copyFileSync(path.join(staging, modelStem, filename), path.join(resources, 'model', filename));
     }
+    for (const filename of kokoroFiles) fs.copyFileSync(path.join(staging, kokoroStem, filename), path.join(resources, 'kokoro', filename));
     fs.copyFileSync(lexicon, path.join(resources, 'model', assets.lexicon.filename));
     fs.copyFileSync(path.join(staging, modelStem, 'LICENSE'), path.join(resources, 'licenses', 'KittenTTS-Mini-LICENSE.txt'));
+    fs.copyFileSync(path.join(staging, kokoroStem, 'LICENSE'), path.join(resources, 'licenses', 'Kokoro-LICENSE.txt'));
     for (const license of licenses) fs.copyFileSync(license, path.join(resources, 'licenses', path.basename(license)));
     fs.copyFileSync(path.join(root, 'third-party', 'NARRATION-NOTICE.md'), path.join(resources, 'licenses', 'NARRATION-NOTICE.md'));
 
     // Verify the delivered CPU engine can speak, rather than only checking file names.
-    const { writeNarration } = require('../src/main/narration');
-    const audio = await writeNarration({ filename: path.join(staging, 'offline-smoke.wav'), text: 'Offline narration is ready.' });
-    if (audio.durationSeconds < 0.2) throw new Error('The narration setup test returned an implausibly short result.');
-    console.log(`KittenTTS Mini offline narration is ready (${audio.durationSeconds.toFixed(2)} s sample).`);
+    const { writeNarration, narrationEngine } = require('../src/main/narration');
+    if (narrationEngine() !== 'kokoro') throw new Error('The Kokoro narration assets were not staged.');
+    for (const voice of ['warm', 'clear']) {
+      const audio = await writeNarration({ filename: path.join(staging, `${voice}.wav`), text: 'The rain fell softly while the kettle warmed up.', voice });
+      if (audio.durationSeconds < 0.2) throw new Error('The narration setup test returned an implausibly short result.');
+      console.log(`Kokoro ${voice} voice is ready (${audio.durationSeconds.toFixed(2)} s sample).`);
+    }
   } finally {
     const absoluteCache = fs.realpathSync(cache);
     const absoluteStage = fs.realpathSync(staging);

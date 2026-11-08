@@ -8,12 +8,13 @@ const { narrationAvailable, writeNarration } = require('./narration');
 const { promptSoundAvailable, writePromptSound } = require('./prompt-sound');
 const { draftSoundPlan } = require('./script-writer');
 const { createReel } = require('./reel');
+const { writeMusic } = require('./music');
 
 function planStudioVideo(modelId, prompt) {
   const isFilm = modelId === 'ltx2-story-free';
   const { visualPrompt, production } = parseProduction(prompt, { inferPortrait: isFilm });
   if (!production) return createVideoPlan(modelId, visualPrompt);
-  if (!isFilm) throw new Error('Choose the 15–20 second film option for automatic framing, narration, or sound.');
+  if (!isFilm) throw new Error('Choose the 15–20 second film option for automatic framing, narration, sound, or music.');
   if ((production.narration || production.autoNarration) && !narrationAvailable()) throw new Error('The local narration engine needs the full Windows installer.');
   if (production.sound === 'prompt' && !promptSoundAvailable()) throw new Error('Install the local prompt sound model, or choose Gentle rain, Ocean surf, or Quiet room.');
   const portrait = production.framing === 'crop';
@@ -35,7 +36,8 @@ function createProduction({ directory, compose }) {
   function paths(job) {
     if (!/^[a-f0-9-]{36}$/i.test(job.id)) throw new Error('The saved production ID is invalid.');
     const cache = path.join(directory, 'production', job.id);
-    return { cache, ready: path.join(cache, 'ready.json'), narrationFile: path.join(cache, 'narration.wav'), soundFile: path.join(cache, 'sound.wav') };
+    return { cache, ready: path.join(cache, 'ready.json'), narrationFile: path.join(cache, 'narration.wav'),
+      soundFile: path.join(cache, 'sound.wav'), musicFile: path.join(cache, 'music.wav') };
   }
 
   async function prepareVideo(job) {
@@ -43,17 +45,19 @@ function createProduction({ directory, compose }) {
     const { production, durationSeconds } = plan;
     if (!production) return;
     const files = paths(job);
+    const hasMusic = production.music && production.music !== 'none';
     try {
       const saved = JSON.parse(await fs.readFile(files.ready, 'utf8'));
       if (saved.plan === JSON.stringify(plan)) {
         if (saved.narration) await fs.access(files.narrationFile);
         if (saved.sound) await fs.access(files.soundFile);
+        if (hasMusic) await fs.access(files.musicFile);
         return saved;
       }
     } catch { /* Rebuild local audio if a previous render did not finish. */ }
 
     await fs.mkdir(files.cache, { recursive: true });
-    for (const filename of [files.ready, files.narrationFile, files.soundFile]) await fs.rm(filename, { force: true });
+    for (const filename of [files.ready, files.narrationFile, files.soundFile, files.musicFile]) await fs.rm(filename, { force: true });
     const draft = production.autoNarration || production.autoSound ? await draftSoundPlan({
       scene: production.visualPrompt, durationSeconds, autoNarration: production.autoNarration, autoSound: production.autoSound,
     }) : {};
@@ -64,6 +68,7 @@ function createProduction({ directory, compose }) {
       if (audio.durationSeconds + 0.25 > durationSeconds) throw new Error(`Narration runs ${audio.durationSeconds.toFixed(1)} seconds. Use a shorter script for a ${durationSeconds}-second video.`);
     }
     if (production.sound === 'prompt') await writePromptSound({ filename: files.soundFile, prompt: soundPrompt, durationSeconds });
+    if (hasMusic) await writeMusic({ filename: files.musicFile, style: production.music, durationSeconds, seed: job.id });
     const saved = { plan: JSON.stringify(plan), narration, sound: production.sound === 'prompt' };
     await fs.writeFile(files.ready, JSON.stringify(saved), { flag: 'wx' });
     return saved;
@@ -77,6 +82,7 @@ function createProduction({ directory, compose }) {
     const source = await compose({ ...input, jobId: `${input.jobId}-picture` });
     const destination = path.join(directory, `${input.jobId}.mp4`);
     await createReel({ source, destination, framing: production.framing, sound: production.sound,
+      music: production.music, musicFile: production.music && production.music !== 'none' ? files.musicFile : undefined,
       narrationFile: prepared.narration ? files.narrationFile : undefined, soundFile: prepared.sound ? files.soundFile : undefined, overwrite: true });
     await fs.unlink(source).catch(() => {});
     return destination;

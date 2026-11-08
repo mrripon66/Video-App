@@ -20,7 +20,7 @@ Use **Choose save folder** before starting a batch to copy each finished video t
 
 In **Video library**, use **Select videos** to pick individual videos or select the latest 20, latest 100, or all completed videos. **Save ZIP** exports your selection as one archive.
 
-## One prompt with narration and sound
+## One prompt with narration, sound, and music
 
 Use the 15–20 second film option. Describe the scene, then add optional instructions on separate lines.
 
@@ -29,18 +29,21 @@ Create a 15-second quiet story about tea on a rainy morning.
 Narration: auto
 Voice: warm
 Sound: Rain tapping the window and a quiet room in the background
+Music: calm
 Format: reel
 ```
 
-For a batch, place one complete prompt on each line and separate its instructions with ` | `. Use `Narration:` followed by exact words for a script you wrote, and `Voice: clear` for the other English voice. `Format: reel` and `Format: crop` request portrait shots for a full-screen 9:16 Reel. This is also the default when you request local narration or sound. Plain film prompts default to landscape. Choose `Format: original` for landscape with local sound, or `Format: fit` to show the whole wide shot over a blurred background. Audio prepares locally before submitting a shot, so a script that exceeds the video length is caught first.
+For a batch, place one complete prompt on each line and separate its instructions with ` | `. Use `Narration:` followed by exact words for a script you wrote, and `Voice: clear` for the other English voice. `Format: reel` and `Format: crop` request portrait shots for a full-screen 9:16 Reel. This is also the default when you request local audio. Plain film prompts default to landscape. Choose `Format: original` for landscape with local audio, or `Format: fit` to show the whole wide shot over a blurred background. Audio prepares locally before submitting a shot, so a script that exceeds the video length is caught first.
 
-The included KittenTTS Mini engine reads English offline. `Narration: auto` uses the local `qwen3.5:4b` model in Ollama. Described effects and ambience use the optional Stable Audio 3 Small SFX CPU add-on. Preset rain, ocean, and room sounds are available from the app itself. See [sound setup and license](third-party/PROMPT-SOUND-NOTICE.md). Powered by Stability AI.
+Use `Music: calm`, `Music: cinematic`, `Music: upbeat`, or `Music: suspense` for an instrumental background. Use `Music: auto` to let the studio pick a style from the scene or `Music: none` to skip added music. The studio creates and mixes the track locally without a paid service.
+
+The Windows installer includes Kokoro English narration, which runs offline. The studio can use KittenTTS Mini when the Kokoro files are unavailable. Use `Voice: warm` for the default female voice or `Voice: clear` for the male voice. `Narration: auto` uses the local `qwen3.5:4b` model in Ollama. Described effects and ambience use the optional Stable Audio 3 Small SFX CPU add-on. Preset rain, ocean, and room sounds are available from the app itself. See [sound setup and license](third-party/PROMPT-SOUND-NOTICE.md). Powered by Stability AI.
 
 Choose **Watch** on a completed video to play, replay, and control sound in the studio. Saved Reels also appear in **Video library**.
 
 ## Make a Reel
 
-Click **Make Reel** on a completed video. **Full screen (center crop)** fills the vertical frame and crops the sides of a wide shot. You can also fit the whole shot over a blurred background. For sound, choose a local ambience preset or **Original sound only** to keep the existing soundtrack. The app saves a separate 1080 × 1920 MP4 with H.264 video and stereo AAC when audio is present. The three ambience presets are synthesized on your PC and use zero GPU generation allowance.
+Click **Make Reel** on a completed video. **Full screen (center crop)** fills the vertical frame and crops the sides of a wide shot. You can also fit the whole shot over a blurred background. For sound, choose a local ambience preset or **Original sound only** to keep the existing soundtrack. Choose a **Background music** style to mix it into the Reel. The app saves a separate 1080 × 1920 MP4 with H.264 video and stereo AAC when audio is present. The music and ambience presets are synthesized on your PC and use zero GPU generation allowance.
 
 ## Video options
 

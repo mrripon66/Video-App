@@ -1,6 +1,8 @@
 'use strict';
 
-const DIRECTIVE = /(?:^|\n[ \t]*|[ \t]+\|[ \t]*)(narration|voiceover|voice|sound|format)[ \t]*:[ \t]*/gi;
+const { MUSIC_PRESETS, matchMusicStyle } = require('./music-styles');
+
+const DIRECTIVE = /(?:^|\n[ \t]*|[ \t]+\|[ \t]*)(narration|voiceover|voice|sound|music|format)[ \t]*:[ \t]*/gi;
 const PRESETS = new Map([
   ['none', 'none'], ['silence', 'none'], ['original sound only', 'none'],
   ['rain', 'rain'], ['gentle rain', 'rain'], ['ocean', 'ocean'], ['ocean surf', 'ocean'],
@@ -46,11 +48,19 @@ function parseProduction(prompt, { inferPortrait = false } = {}) {
   const soundPrompt = sound === 'prompt' && !autoSound ? soundRequest : '';
   if (soundPrompt.length > 500) throw new Error('Keep the sound description to 500 characters or fewer.');
 
+  const musicCue = /\b(?:background music|instrumental (?:music|score)|soundtrack|with music|add music|(?:soft|gentle|cinematic|upbeat|suspenseful) music)\b/i.test(visualPrompt);
+  const noMusic = /\b(?:no|without|avoid) (?:any )?(?:(?:background|instrumental) )?(?:music|soundtrack)\b/i.test(prompt);
+  const musicRequest = (values.music || (musicCue && !noMusic ? 'auto' : 'none')).toLowerCase();
+  const music = musicRequest === 'auto' ? matchMusicStyle(visualPrompt) || 'calm' :
+    /^(?:none|off|no music)$/.test(musicRequest) ? 'none' :
+      Object.hasOwn(MUSIC_PRESETS, musicRequest) ? musicRequest : matchMusicStyle(musicRequest);
+  if (!music) throw new Error('Choose Music: calm, cinematic, upbeat, suspense, auto, or none.');
+
   const framing = FRAMINGS.get((values.format || 'reel').toLowerCase());
   if (!framing) throw new Error('Choose Format: reel, Format: fit, or Format: original.');
   const portraitCue = inferPortrait && /\b(?:vertical (?:reel|video|clip|film|short)|9\s*:\s*16)\b/i.test(visualPrompt);
-  if (!matches.length && !autoNarration && !autoSound && !portraitCue) return { visualPrompt, production: null };
-  return { visualPrompt, production: { framing, voice, narration, autoNarration, sound, soundPrompt, autoSound } };
+  if (!matches.length && !autoNarration && !autoSound && !portraitCue && music === 'none') return { visualPrompt, production: null };
+  return { visualPrompt, production: { framing, voice, narration, autoNarration, sound, soundPrompt, autoSound, music } };
 }
 
 module.exports = { parseProduction };
