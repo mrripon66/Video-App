@@ -71,6 +71,18 @@ test('500-prompt import is atomic, persistent, paused and capped independently o
   assert.equal(queue.snapshot().stats.total, 501);
 });
 
+test('an export folder is persisted only for prompts added with that folder', t => {
+  const { queue, dir } = fixture(t);
+  queue.addPrompts(['Existing prompt'], 'wan');
+  const directory = path.join(dir, 'chosen-output');
+  queue.addPrompts(['First export', 'Second export'], 'wan', { autoExportDirectory: directory });
+  queue.addPrompts(['Later prompt'], 'wan');
+  assert.throws(() => queue.addPrompts(['Invalid export'], 'wan', { autoExportDirectory: 'relative-folder' }), /export folder/);
+  const restored = new Store(dir).load();
+  assert.deepEqual(restored.jobs.map(job => job.autoExport), [undefined,
+    { directory, status: 'pending' }, { directory, status: 'pending' }, undefined]);
+});
+
 test('explicit selected IDs gate network calls and later additions are never included automatically', async t => {
   const gate = deferred();
   let submits = 0;
@@ -648,8 +660,8 @@ test('pausing a long video preserves its accepted shot and prevents the next sub
   assert.equal(queue.snapshot().jobs[0].status, 'completed');
 });
 
-test('restart between generated shots stays paused and continues only the unfinished shot', async t => {
-  const { queue, store, dir } = storyFixture(t);
+test('restart between portrait shots stays paused and continues only the unfinished portrait shot', async t => {
+  const { queue, store, dir } = storyFixture(t, { planVideo: () => ({ ...storyPlan(), orientation: 'portrait' }) });
   const [job] = queue.addPrompts(['Whale story'], 'ltx2-story-free');
   store.mutate(state => {
     const item = state.jobs[0];
@@ -659,8 +671,14 @@ test('restart between generated shots stays paused and continues only the unfini
   const restoredStore = new Store(dir); restoredStore.load();
   let submissions = 0;
   const restored = new Queue({ store: restoredStore, models: storyModels,
-    providerFactory: () => ({ async submit(_id, prompt) { submissions++; assert.match(prompt, /5-second/); return remote; }, async poll() { return ready; } }),
-    download: async () => 'C:\\videos\\second-shot.mp4', composeVideo: async () => 'C:\\videos\\joined.mp4', pollIntervalMs: 0,
+    providerFactory: (_model, context) => {
+      assert.deepEqual(context, { purpose: 'story', orientation: 'portrait' });
+      return { async submit(_id, prompt) { submissions++; assert.match(prompt, /5-second/); return remote; }, async poll() { return ready; } };
+    },
+    download: async () => 'C:\\videos\\second-shot.mp4', composeVideo: async ({ orientation }) => {
+      assert.equal(orientation, 'portrait');
+      return 'C:\\videos\\joined.mp4';
+    }, pollIntervalMs: 0,
   });
   t.after(() => restored.dispose());
   restored.recover();
@@ -783,6 +801,7 @@ test('cancelling an unconfirmed long-video request preserves its completed shot 
 
 test('invalid saved duration grids and segment structures are rejected before any GPU submission', async t => {
   const invalidPlans = [
+    { ...storyPlan(), orientation: 'square' },
     { ...storyPlan(), durationSeconds: 14 },
     { ...storyPlan(), durationSeconds: 21 },
     { ...storyPlan(), durationSeconds: 15.05, segments: [{ ...storyPlan().segments[0] }, { ...storyPlan().segments[1], durationSeconds: 5.05 }] },
@@ -797,24 +816,37 @@ test('invalid saved duration grids and segment structures are rejected before an
   }
 });
 
-test('long-video provider construction carries the story preset context without changing normal clips', async t => {
-  const contexts = [];
+test('provider construction checks each story orientation without changing normal clips', async t => {
+  const contexts = [], orientations = [];
   let provider;
-  const result = storyFixture(t, { providerFactory(model, context) {
-    contexts.push({ modelId: model.id, context });
-    return provider;
-  } });
+  const result = storyFixture(t, {
+    planVideo: (modelId, prompt) => {
+      if (modelId !== 'ltx2-story-free') return null;
+      return prompt === 'Portrait story' ? { ...storyPlan(), orientation: 'portrait' } : storyPlan();
+    },
+    providerFactory(model, context) {
+      contexts.push({ modelId: model.id, context });
+      return provider;
+    },
+    async composeVideo({ orientation }) {
+      orientations.push(orientation);
+      return 'C:\\videos\\joined.mp4';
+    },
+  });
   provider = result.provider;
   result.queue.addPrompts(['Normal clip'], 'ltx2-free');
-  result.queue.addPrompts(['Whale story'], 'ltx2-story-free');
+  result.queue.addPrompts(['Whale story', 'Portrait story'], 'ltx2-story-free');
   approve(result.queue); await result.queue.waitForIdle();
   assert.deepEqual(contexts, [
     { modelId: 'ltx2-free', context: undefined },
     { modelId: 'ltx2-free', context: { purpose: 'story' } },
+    { modelId: 'ltx2-free', context: { purpose: 'story', orientation: 'portrait' } },
     { modelId: 'ltx2-free', context: undefined },
     { modelId: 'ltx2-free', context: { purpose: 'story' } },
+    { modelId: 'ltx2-free', context: { purpose: 'story', orientation: 'portrait' } },
   ]);
-  assert.deepEqual(result.queue.snapshot().jobs.map(job => job.status), ['completed', 'completed']);
+  assert.deepEqual(orientations, [undefined, 'portrait']);
+  assert.deepEqual(result.queue.snapshot().jobs.map(job => job.status), ['completed', 'completed', 'completed']);
 });
 
 test('an authorized automatic batch waits for Retry-After, reopens and finishes only selected prompts', async t => {

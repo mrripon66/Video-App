@@ -35,7 +35,7 @@
             <div class="composer-topline"><label for="prompt-input">YOUR PROMPT</label><span id="prompt-length">0 / 10,000</span></div>
             <textarea id="prompt-input" maxlength="10000" placeholder="A slow cinematic shot of a quiet coastal village at sunrise. Warm light, gentle waves, soft film grain…" rows="3" required></textarea>
             <div id="create-model-details" class="model-details" aria-live="polite"></div>
-            <div id="story-duration-hint" class="story-duration-hint" hidden><strong>15 seconds by default.</strong> For 20 seconds, include “20 seconds” in your prompt. Two separate AI shots are joined. Add <strong>Narration: auto</strong> or the words to read, and <strong>Sound: rain against a kitchen window</strong> on separate lines.</div>
+            <div id="story-duration-hint" class="story-duration-hint" hidden><strong>15 seconds by default.</strong> For 20 seconds, include “20 seconds” in your prompt. Two separate AI shots are joined into one video. Add <strong>Format: reel</strong> for full-screen vertical video or <strong>Format: original</strong> for landscape. Add <strong>Narration: auto</strong> or the words to read, and <strong>Sound: rain against a kitchen window</strong> on separate lines.</div>
             <div id="animatediff-duration-hint" class="story-duration-hint" hidden><strong>Short animation: 1.6 seconds.</strong> AnimateDiff Lightning makes a fixed-length clip; choose the edited-video model for 15–20 seconds.</div>
             <div class="composer-toolbar"><div class="composer-tools"><label class="model-selector"><span data-icon="sparkles"></span><span class="sr-only">Video model</span><select id="create-model" aria-label="Video model"></select></label><span class="toolbar-divider"></span><button type="button" class="voice-button" id="voice-button" title="Dictate with Windows speech recognition"><span data-icon="mic"></span><span id="voice-label">Voice prompt</span></button></div><button class="primary-button" type="submit" id="add-prompt">Generate <span data-icon="arrow-right"></span></button></div>
           </form>
@@ -44,11 +44,45 @@
         <section id="view-queue" class="view" hidden>
           <div class="page-heading"><div><div class="eyebrow">ONE IDEA OR FIVE HUNDRED</div><h1>Batch queue</h1><p>Generate one video at a time. An automatic batch waits for confirmed free allowance resets while the app is running.</p></div><div class="heading-actions"><button class="secondary-button" id="pause-queue"><span data-icon="pause"></span>Pause queue</button><button class="primary-button" id="review-queue"><span data-icon="play"></span>Start queue</button></div></div>
           <div class="stats-grid"><div class="stat-card"><span>In queue</span><strong id="stat-pending">0</strong><small>Waiting to generate</small></div><div class="stat-card"><span>In progress</span><strong id="stat-active">0</strong><small id="queue-state">Queue is paused</small></div><div class="stat-card"><span>Completed</span><strong id="stat-completed">0</strong><small>Saved to your library</small></div><div class="stat-card"><span>Needs a look</span><strong id="stat-failed">0</strong><small>See details or retry</small></div></div>
-          <div class="batch-panel"><div class="panel-heading"><div><h2>Generate a batch</h2><p>Save up to 500 active prompts, one per line. Separate narration and sound instructions with |.</p></div><button class="text-button" id="import-prompts"><span data-icon="upload"></span>Import .txt</button></div><label class="sr-only" for="batch-input">Batch prompts, one per line</label><textarea id="batch-input" rows="4" placeholder="A paper boat floating down a rain-soaked city street…&#10;A sunlit greenhouse filled with towering tropical plants…&#10;A wide aerial shot of rolling green hills at golden hour…"></textarea><div class="batch-toolbar"><label class="model-selector"><span data-icon="sparkles"></span><span class="sr-only">Batch model</span><select id="batch-model" aria-label="Batch model"></select></label><span class="batch-counter" id="batch-count">0 prompts</span><button class="secondary-button" id="add-batch"><span data-icon="play"></span>Generate batch</button></div></div>
+          <div class="batch-panel">
+            <div class="panel-heading"><div><h2>Generate a batch</h2><p>Save up to 500 active prompts, one per line. Separate narration and sound instructions with |.</p></div><button class="text-button" id="import-prompts"><span data-icon="upload"></span>Import .txt</button></div>
+            <label class="sr-only" for="batch-input">Batch prompts, one per line</label><textarea id="batch-input" rows="4" placeholder="A paper boat floating down a rain-soaked city street…&#10;A sunlit greenhouse filled with towering tropical plants…&#10;A wide aerial shot of rolling green hills at golden hour…"></textarea>
+            <div class="batch-folder">
+              <div><strong>Automatic save folder</strong><p id="batch-save-folder" role="status">Optional. Save a copy of each finished video to a folder for this batch.</p></div>
+              <div class="batch-folder-actions">
+                <button type="button" class="secondary-button" id="choose-batch-folder"><span data-icon="folder"></span>Choose save folder</button>
+                <button type="button" class="text-button" id="clear-batch-folder" hidden>Clear folder</button>
+              </div>
+            </div>
+            <div class="batch-toolbar"><label class="model-selector"><span data-icon="sparkles"></span><span class="sr-only">Batch model</span><select id="batch-model" aria-label="Batch model"></select></label><span class="batch-counter" id="batch-count">0 prompts</span><button class="secondary-button" id="add-batch"><span data-icon="play"></span>Generate batch</button></div>
+          </div>
           <div class="section-title"><h2>Queue activity <span id="queue-total">0</span></h2><span class="muted-small">Newest added first</span></div><div id="queue-list" class="queue-list"></div>
         </section>
         <section id="view-library" class="view" hidden>
-          <div class="page-heading"><div><div class="eyebrow">YOUR FINISHED WORK</div><h1>Video library</h1><p>Real videos, saved locally and ready for what’s next.</p></div><span class="outline-pill"><span data-icon="folder"></span><span id="library-count">0 videos</span></span></div><div id="library-grid" class="library-grid"></div>
+          <div class="page-heading">
+            <div><div class="eyebrow">YOUR FINISHED WORK</div><h1>Video library</h1><p>Real videos, saved locally and ready for what’s next.</p></div>
+            <div class="heading-actions library-heading-actions">
+              <span class="outline-pill"><span data-icon="folder"></span><span id="library-count">0 videos</span></span>
+              <button type="button" class="secondary-button" id="library-select" aria-controls="library-selection" disabled>Select videos</button>
+            </div>
+          </div>
+          <section class="library-selection" id="library-selection" aria-label="Batch ZIP export" hidden>
+            <div class="library-selection-controls">
+              <div class="library-selection-buttons">
+                <button type="button" class="secondary-button" id="library-select-latest-20">Select latest 20</button>
+                <button type="button" class="secondary-button" id="library-select-latest-100">Select latest 100</button>
+                <button type="button" class="secondary-button" id="library-select-all">Select all</button>
+                <button type="button" class="text-button" id="library-clear-selection">Clear</button>
+              </div>
+              <div class="library-selection-buttons">
+                <span class="library-selection-count" id="library-selection-count" role="status"></span>
+                <button type="button" class="primary-button" id="library-save-zip"><span data-icon="download"></span>Save ZIP</button>
+                <button type="button" class="text-button" id="library-selection-done">Done selecting</button>
+              </div>
+            </div>
+            <p class="library-zip-error" id="library-zip-error" role="alert" hidden></p>
+          </section>
+          <div id="library-grid" class="library-grid"></div>
         </section>
         <section id="view-settings" class="view settings-view" hidden>
           <div class="page-heading"><div><div class="eyebrow">FREE MEANS FREE</div><h1>Studio settings</h1><p>No API key, payment card, subscription, or paid fallback.</p></div></div>
@@ -63,13 +97,13 @@
   <template id="reel-dialog-template">
     <dialog class="reel-dialog" aria-labelledby="reel-title" aria-describedby="reel-description">
       <h2 id="reel-title">Make Reel</h2>
-      <p id="reel-description">Save a separate vertical 1080 × 1920 MP4.</p>
+      <p id="reel-description">Save a separate vertical 1080 × 1920 MP4. Full-screen framing crops the sides of a wide shot.</p>
       <form>
         <div class="reel-fields">
           <label>Framing
             <select name="framing" autofocus>
-              <option value="fit">Fit whole video with a blurred background</option>
-              <option value="crop">Fill screen with a center crop</option>
+              <option value="crop">Full screen (center crop)</option>
+              <option value="fit">Whole shot with blurred background</option>
             </select>
           </label>
           <label>Sound

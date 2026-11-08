@@ -14,6 +14,100 @@
   justify-content: flex-start;
   column-gap: 12px;
 }
+.library-heading-actions, .library-selection-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.library-heading-actions {
+  justify-content: flex-end;
+}
+.library-selection {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  background: #f3f8ef;
+  border: 1px solid #dce7d9;
+  border-radius: 8px;
+}
+.library-selection-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+.library-selection-count, .video-zip-selection {
+  color: #405b4f;
+  font-size: 12px;
+  font-weight: 600;
+}
+.video-zip-selection {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+.video-zip-selection input {
+  accent-color: #2c675e;
+  scroll-margin-top: 120px;
+}
+.video-card:has(.video-zip-selection input:checked) {
+  border-color: #2c675e;
+}
+.video-zip-selection:has(input:checked) {
+  background: #e1f0e6;
+}
+.library-zip-error {
+  margin: 8px 0 0;
+  color: #8d422a;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.batch-folder {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  margin: 12px 0;
+  padding: 10px 12px;
+  background: #f3f8ef;
+  border: 1px solid #dce7d9;
+  border-radius: 8px;
+  color: #405b4f;
+  font-size: 12px;
+}
+.batch-folder > div:first-child {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.batch-folder p {
+  margin: 3px 0 0;
+  overflow-wrap: anywhere;
+}
+.batch-folder-actions, .job-auto-export-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.job-auto-export {
+  margin-top: 6px;
+  color: #405b4f;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.job-auto-export p {
+  margin: 0;
+}
+.job-auto-export-actions .text-button {
+  font-size: 11px;
+}
 .video-reel-button {
   color: var(--teal-dark);
   font-weight: 650;

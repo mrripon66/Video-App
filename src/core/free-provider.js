@@ -1,10 +1,12 @@
 'use strict';
 
 const FREE_SPACE_ORIGIN = 'https://lightricks-ltx-video-distilled.hf.space';
+// Gradio's last two arguments are height, then width.
+const LTX2_DIMENSIONS = Object.freeze({ detail: [1024, 1536], film: [512, 768], 'film-portrait': [768, 512] });
 const PROFILES = Object.freeze({
   'ltx2-free': Object.freeze({ origin: 'https://lightricks-ltx-2-3.hf.space', prefix: '/gradio_api', api: 'generate_video', output: 'file',
     parameters: ['input_image', 'prompt', 'duration', 'enhance_prompt', 'seed', 'randomize_seed', 'height', 'width'],
-    input: (prompt, duration, preset) => [null, prompt, duration ?? 3, false, 42, false, preset === 'film' ? 512 : 1024, preset === 'film' ? 768 : 1536] }),
+    input: (prompt, duration, preset) => [null, prompt, duration ?? 3, false, 42, false, ...LTX2_DIMENSIONS[preset]] }),
   'wan-free': Object.freeze({ origin: 'https://kingnish-wan2-2-fast.hf.space', prefix: '/gradio_api', api: 'generate_video', output: 'video',
     parameters: ['input_image', 'prompt', 'height', 'width', 'negative_prompt', 'duration_seconds', 'guidance_scale', 'steps', 'seed', 'randomize_seed'],
     input: (prompt, duration) => [null, prompt, 896, 896, 'blurry, distorted, low quality, static, watermark', duration ?? 5, 0, 8, 42, false] }),
@@ -18,7 +20,7 @@ const PROFILES = Object.freeze({
 const FREE_SPACE_ORIGINS = Object.freeze([...new Set(Object.values(PROFILES).map(profile => profile.origin))]);
 const FREE_MODELS = Object.freeze([
   { id: 'ltx2-story-free', name: 'LTX 2.3 — 15–20 second film', provider: 'huggingface', available: true,
-    description: '15–20 seconds (default 15) · 768 × 512 native · two newly generated shots joined with a cut · free GPU quota applies to each shot', endpoint: 'Lightricks/LTX-2-3',
+    description: '15–20 seconds (default 15) · native portrait or landscape · two newly generated shots joined with a cut · free GPU quota applies to each shot', endpoint: 'Lightricks/LTX-2-3',
     docsUrl: 'https://huggingface.co/spaces/Lightricks/LTX-2-3', limits: { gpuSeconds: 75, quotaMultiplier: 1, minDuration: 15, maxDuration: 20, durationStep: 0.1, defaultDuration: 15, segments: 2, defaultWidth: 768, defaultHeight: 512 } },
   { id: 'ltx2-free', name: 'LTX 2.3 — Free', provider: 'huggingface', available: true,
     description: '1–10 seconds (default 3) · 1536 × 1024 · publisher high-resolution preset', endpoint: 'Lightricks/LTX-2-3',
@@ -172,7 +174,9 @@ class FreeProvider {
     const { fetchImpl = globalThis.fetch, timeoutMs = 10 * 60 * 1000, videoPreset = 'detail' } = options;
     if (typeof fetchImpl !== 'function') throw new TypeError('A fetch implementation is required.');
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30 * 60 * 1000) throw new TypeError('Choose a bounded GPU request timeout.');
-    if (!['detail', 'film'].includes(videoPreset)) throw new TypeError('Choose the reviewed detail or film video preset.');
+    if (typeof videoPreset !== 'string' || !Object.hasOwn(LTX2_DIMENSIONS, videoPreset)) {
+      throw new TypeError('Choose a supported video preset.');
+    }
     this.fetchImpl = fetchImpl;
     this.timeoutMs = timeoutMs;
     this.videoPreset = videoPreset;

@@ -16,6 +16,8 @@ const { SOUND_PRESETS } = require('./sound');
 const { narrationAvailable, NARRATION_VOICES } = require('./narration');
 const { promptSoundAvailable } = require('./prompt-sound');
 const { createProduction, planStudioVideo } = require('./production');
+const { writeVideoZip } = require('./video-zip');
+const { createAutoExporter } = require('./auto-export');
 const { dictate } = require('./voice');
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'studio-media', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } }]);
@@ -24,16 +26,21 @@ const singleInstance = app.requestSingleInstanceLock();
 if (!singleInstance) { app.quit(); } else { boot(); }
 
 function boot() {
-  let window, queue, store, mediaDir;
+  let window, queue, store, mediaDir, autoExporter, zipTransfer;
   let voiceAvailable = process.platform === 'win32';
   let voiceReason = '';
   let dictating = false;
   let exportingReel = false;
+  let exportingZip = false;
   let quitting = false;
+  const chosenExportFolders = new Set();
   const rendererPath = path.join(__dirname, '..', 'renderer', 'index.html');
   const rendererUrl = pathToFileURL(rendererPath).href;
   function changed() {
     if (window && !window.isDestroyed()) window.webContents.send('studio:changed');
+  }
+  function copyFinishedVideos() {
+    autoExporter.kick().catch(error => console.error('Automatic export could not update the library:', error));
   }
   function snapshot() {
     return { ...queue.snapshot(), models: PUBLIC_MODELS, modelAliases: { ...MODEL_ALIASES, 'local-reel': 'Reel' }, ready: true, freeOnly: true,
@@ -56,6 +63,15 @@ function boot() {
     const canonicalRelative = path.relative(fs.realpathSync(mediaDir), canonical);
     if (!canonicalRelative || canonicalRelative.startsWith('..') || path.isAbsolute(canonicalRelative) || !fs.statSync(canonical).isFile()) {
       throw new Error('The saved video is outside the library.');
+    }
+    return canonical;
+  }
+  async function exportFolder(directory) {
+    const canonical = await fs.promises.realpath(directory);
+    const relative = path.relative(await fs.promises.realpath(store.dataDir), canonical);
+    const insideStudio = !relative || (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith('..' + path.sep));
+    if (insideStudio || !(await fs.promises.stat(canonical)).isDirectory()) {
+      throw new Error('Choose a folder outside the studio’s internal storage.');
     }
     return canonical;
   }
@@ -87,15 +103,21 @@ function boot() {
     fs.mkdirSync(mediaDir, { recursive: true });
     store = new Store(dataDir);
     store.load();
+    autoExporter = createAutoExporter({ store, localVideo, resolveFolder: exportFolder, onChange: changed });
     const production = createProduction({ directory: mediaDir, compose: createComposer({ directory: mediaDir }) });
     queue = new Queue({ store, models: MODELS, providerFactory: (model, context) => {
       if (model.provider !== 'huggingface' || !FREE_MODELS.some(entry => entry.id === model.id)) throw new Error('This application permits only the configured free provider.');
-      return new FreeProvider({ videoPreset: context?.purpose === 'story' ? 'film' : 'detail' });
+      const videoPreset = context?.purpose === 'story' ? (context.orientation === 'portrait' ? 'film-portrait' : 'film') : 'detail';
+      return new FreeProvider({ videoPreset });
     },
       planVideo: planStudioVideo, prepareVideo: production.prepareVideo,
       composeVideo: input => production.finishVideo(getJob(input.jobId), input),
-      download: (url, id) => downloadVideo(url, id, mediaDir), onChange: changed, pollIntervalMs: 4000 });
+      download: (url, id) => downloadVideo(url, id, mediaDir), onChange: () => {
+        changed();
+        copyFinishedVideos();
+      }, pollIntervalMs: 4000 });
     queue.recover();
+    copyFinishedVideos();
     session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
     session.defaultSession.setPermissionCheckHandler(() => false);
     protocol.handle('studio-media', async request => {
@@ -125,9 +147,31 @@ function boot() {
     handle('snapshot', snapshot);
     handle('getVersion', () => app.getVersion());
     handle('openProviderSite', () => shell.openExternal('https://huggingface.co/spaces/Lightricks/LTX-2-3'));
+    handle('chooseBatchFolder', async () => {
+      const result = await dialog.showOpenDialog(window, { title: 'Choose where to save finished videos', properties: ['openDirectory', 'createDirectory'] });
+      if (result.canceled || !result.filePaths.length) return null;
+      const directory = await exportFolder(result.filePaths[0]);
+      chosenExportFolders.add(directory);
+      return { directory };
+    });
     handle('addPrompts', input => {
-      const jobs = queue.addPrompts(input?.prompts, input?.modelId);
+      const directory = input?.autoExportDirectory;
+      if (directory !== undefined && !chosenExportFolders.has(directory)) throw new Error('Choose a save folder for this batch first.');
+      const jobs = queue.addPrompts(input?.prompts, input?.modelId, { autoExportDirectory: directory });
       return { ...snapshot(), addedJobIds: jobs.map(job => job.id) };
+    });
+    handle('retryAutoExport', input => {
+      const job = getJob(input?.id);
+      if (job.status !== 'completed' || job.autoExport?.status !== 'failed') throw new Error('Choose a video whose folder copy failed.');
+      const directory = input?.autoExportDirectory;
+      if (directory !== undefined && !chosenExportFolders.has(directory)) throw new Error('Choose a save folder first.');
+      store.mutate(state => {
+        const current = state.jobs.find(item => item.id === job.id);
+        current.autoExport = { directory: directory ?? job.autoExport.directory, status: 'pending' };
+      });
+      changed();
+      copyFinishedVideos();
+      return snapshot();
     });
     handle('startQueue', input => { queue.start(input); return snapshot(); });
     handle('pauseQueue', () => { queue.pause(); return snapshot(); });
@@ -152,6 +196,36 @@ function boot() {
       const result = await dialog.showSaveDialog(window, { title: 'Export video', defaultPath: path.join(app.getPath('videos'), `AI-Video-${job.id.slice(0, 8)}${path.extname(target)}`), filters: [{ name: 'Video', extensions: [path.extname(target).slice(1)] }] });
       if (result.canceled) return { cancelled: true };
       await fs.promises.copyFile(target, result.filePath); return { saved: true };
+    });
+    handle('exportZip', async input => {
+      if (exportingZip) throw new Error('A ZIP is already being saved.');
+      const ids = input?.ids;
+      const jobs = new Map(store.snapshot().jobs.map(job => [job.id, job]));
+      if (!Array.isArray(ids) || !ids.length || ids.length > jobs.size || ids.some(id => typeof id !== 'string' || !jobs.has(id))) {
+        throw new Error('Select one or more completed videos from the library.');
+      }
+      const videos = [...new Set(ids)].map(id => {
+        const job = jobs.get(id);
+        return { source: localVideo(job), title: job.title || job.prompt };
+      });
+      exportingZip = true;
+      try {
+        const result = await dialog.showSaveDialog(window, { title: 'Save selected videos as ZIP',
+          defaultPath: path.join(app.getPath('videos'), `AI Video Studio - ${videos.length} videos.zip`),
+          filters: [{ name: 'ZIP archive', extensions: ['zip'] }] });
+        if (result.canceled || !result.filePath) return { cancelled: true };
+        if (path.extname(result.filePath).toLowerCase() !== '.zip') throw new Error('Save the archive with a .zip filename.');
+        const parent = await exportFolder(path.dirname(result.filePath));
+        zipTransfer = writeVideoZip(path.join(parent, path.basename(result.filePath)), videos);
+        try {
+          await zipTransfer;
+        } catch (error) {
+          const message = error.code === 'ENOSPC' ? 'The save folder does not have enough space for this ZIP.' :
+            'The ZIP could not be saved. Check that the selected videos and save folder are still available.';
+          throw new Error(message, { cause: error });
+        }
+        return { saved: true, count: videos.length };
+      } finally { exportingZip = false; zipTransfer = undefined; }
     });
     handle('makeReel', async input => {
       if (exportingReel) throw new Error('A Reel is already being saved.');
@@ -206,6 +280,15 @@ function boot() {
     app.quit();
   });
   app.on('second-instance', () => { if (window) { if (window.isMinimized()) window.restore(); window.focus(); } });
-  app.on('window-all-closed', () => { quitting = true; queue?.dispose({ preserveAutomatic: true }); app.quit(); });
-  app.on('before-quit', () => { if (!quitting) queue?.dispose({ preserveAutomatic: true }); quitting = true; });
+  app.on('window-all-closed', () => app.quit());
+  app.on('before-quit', event => {
+    if (quitting) return;
+    quitting = true;
+    queue?.dispose({ preserveAutomatic: true });
+    const pending = [autoExporter?.stop(), zipTransfer].filter(Boolean);
+    if (pending.length) {
+      event.preventDefault();
+      Promise.allSettled(pending).then(() => app.quit());
+    }
+  });
 }

@@ -16,6 +16,10 @@ Download the Windows x64 installer from [GitHub Releases](https://github.com/mrr
 
 An explicitly started automatic batch is saved across restarts and waits for confirmed quota refusals to reset. Pause stops the batch schedule. Saved remote handles are used for monitoring, and ambiguous requests are held for review. Free GPU availability determines throughput.
 
+Use **Choose save folder** before starting a batch to copy each finished video to that folder as it completes. Choose a folder separately for each batch. If a copy fails, the finished video remains in your library. In the queue, use **Retry folder save** or **Choose a different folder** for that video.
+
+In **Video library**, use **Select videos** to pick individual videos or select the latest 20, latest 100, or all completed videos. **Save ZIP** exports your selection as one archive.
+
 ## One prompt with narration and sound
 
 Use the 15–20 second film option. Describe the scene, then add optional instructions on separate lines.
@@ -28,7 +32,7 @@ Sound: Rain tapping the window and a quiet room in the background
 Format: reel
 ```
 
-For a batch, place one complete prompt on each line and separate its instructions with ` | `. Use `Narration:` followed by exact words for a script you wrote, and `Voice: clear` for the other English voice. `Format: crop` fills the vertical frame and `Format: original` keeps the source framing. Audio prepares locally before submitting a shot, so a script that exceeds the video length is caught first.
+For a batch, place one complete prompt on each line and separate its instructions with ` | `. Use `Narration:` followed by exact words for a script you wrote, and `Voice: clear` for the other English voice. `Format: reel` and `Format: crop` request portrait shots for a full-screen 9:16 Reel. This is also the default when you request local narration or sound. Plain film prompts default to landscape. Choose `Format: original` for landscape with local sound, or `Format: fit` to show the whole wide shot over a blurred background. Audio prepares locally before submitting a shot, so a script that exceeds the video length is caught first.
 
 The included KittenTTS Mini engine reads English offline. `Narration: auto` uses the local `qwen3.5:4b` model in Ollama. Described effects and ambience use the optional Stable Audio 3 Small SFX CPU add-on. Preset rain, ocean, and room sounds are available from the app itself. See [sound setup and license](third-party/PROMPT-SOUND-NOTICE.md). Powered by Stability AI.
 
@@ -36,13 +40,13 @@ Choose **Watch** on a completed video to play, replay, and control sound in the 
 
 ## Make a Reel
 
-Click **Make Reel** on a completed video. Choose a full-screen center crop or fit the whole shot, then select **Gentle rain**, **Ocean surf**, **Quiet room**, or **Original sound only**. The app saves a separate 1080 × 1920 MP4 with H.264 video and stereo AAC when audio is present. The three ambience presets are synthesized on your PC and use zero GPU generation allowance.
+Click **Make Reel** on a completed video. **Full screen (center crop)** fills the vertical frame and crops the sides of a wide shot. You can also fit the whole shot over a blurred background. For sound, choose a local ambience preset or **Original sound only** to keep the existing soundtrack. The app saves a separate 1080 × 1920 MP4 with H.264 video and stereo AAC when audio is present. The three ambience presets are synthesized on your PC and use zero GPU generation allowance.
 
 ## Video options
 
 | Option | Output and duration | Status |
 | --- | --- | --- |
-| LTX 2.3 — 15–20 second film | Two generated shots: 10 seconds plus the remainder; default total 15 seconds. Native 768 × 512, joined at 24 fps without audio. | A real anonymous 15-second film completed, decoded, played and sought successfully in the studio. Twenty-second assembly passed with local test fixtures; a fresh 20-second GPU film has not been tested. |
+| LTX 2.3 — 15–20 second film | Two generated shots of 10 seconds and the remaining duration. Defaults to 15 seconds. `Format: reel` produces 1080 × 1920 output from portrait shots. | A real anonymous 15-second landscape film completed, decoded, played and sought successfully in the studio. Local tests cover full-screen Reel export. |
 | LTX 2.3 — Free | One 1536 × 1024 clip; 1–10 seconds in 0.1-second steps; default 3 seconds. | Real anonymous three-second output downloaded, decoded and played. |
 | AnimateDiff Lightning — Free | epiCRealism, 8 steps; fixed 16 frames at 10 fps, about 1.6 seconds. | Real anonymous output downloaded, decoded and played in the studio. |
 | Wan 2.2 Fast 5B | Community service. | Disabled: a real request failed without a usable error explanation. |

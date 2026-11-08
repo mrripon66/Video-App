@@ -386,9 +386,9 @@ test('the observed Gradio 4 AnimateDiff FileData prefix is normalized only for i
   }
 });
 
-test('only the reviewed film preset changes LTX to the publisher low-resolution dimensions', async () => {
+test('the LTX presets send the publisher dimensions in height, width order', async () => {
   const profile = newProfiles[0];
-  for (const [preset, dimensions] of [[undefined, [1024, 1536]], ['detail', [1024, 1536]], ['film', [512, 768]]]) {
+  for (const [preset, dimensions] of [[undefined, [1024, 1536]], ['detail', [1024, 1536]], ['film', [512, 768]], ['film-portrait', [768, 512]]]) {
     const calls = [];
     const provider = new FreeProvider({ ...(preset ? { videoPreset: preset } : {}), fetchImpl: async (url, options) => {
       calls.push({ url, options });
@@ -400,7 +400,7 @@ test('only the reviewed film preset changes LTX to the publisher low-resolution 
     assert.deepEqual(JSON.parse(calls[1].options.body).data, [null, prompt, 10, false, 42, false, ...dimensions]);
   }
   for (const videoPreset of ['custom', '768x512', 'https://evil.example', '', null, 1, {}, ['film']]) {
-    assert.throws(() => new FreeProvider({ videoPreset }), /reviewed detail or film/);
+    assert.throws(() => new FreeProvider({ videoPreset }), /supported video preset/);
   }
 });
 

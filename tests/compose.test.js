@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
-const { createComposer, decodedDuration } = require('../src/main/compose');
+const { createComposer, decodedDuration, runMedia } = require('../src/main/compose');
 
 test('real local assembly produces 15 and 20 seconds and refuses short or outside clips', { timeout: 180000 }, async t => {
   const executable = require('ffmpeg-static');
@@ -23,11 +23,13 @@ test('real local assembly produces 15 and 20 seconds and refuses short or outsid
   makeFixture(first, 'testsrc2', 10);
   makeFixture(second, 'color=c=blue', 10);
   const compose = createComposer({ directory: library, executable });
-  for (const seconds of [15, 20]) {
-    const output = await compose({ jobId: 'test-' + seconds, durationSeconds: seconds,
+  for (const [seconds, orientation, resolution] of [[15, undefined, /768x512/], [20, 'portrait', /512x768/]]) {
+    const output = await compose({ jobId: 'test-' + seconds, durationSeconds: seconds, orientation,
       segments: [{ videoPath: first, durationSeconds: 10 }, { videoPath: second, durationSeconds: seconds - 10 }] });
     assert.ok(fs.statSync(output).size > 1000);
     assert.ok(Math.abs(await decodedDuration(output, executable) - seconds) < 0.1);
+    const { diagnostic } = await runMedia(executable, ['-i', output, '-map', '0:v:0', '-frames:v', '1', '-f', 'null', '-']);
+    assert.match(diagnostic, resolution);
   }
   const short = path.join(library, 'short.mp4');
   makeFixture(short, 'testsrc2', 1);

@@ -4,6 +4,8 @@ const invoke = (name) => (payload) => ipcRenderer.invoke(`studio:${name}`, paylo
 contextBridge.exposeInMainWorld('studio', Object.freeze({
   snapshot: invoke('snapshot'),
   addPrompts: invoke('addPrompts'),
+  chooseBatchFolder: invoke('chooseBatchFolder'),
+  retryAutoExport: invoke('retryAutoExport'),
   startQueue: invoke('startQueue'),
   pauseQueue: invoke('pauseQueue'),
   cancelJob: invoke('cancelJob'),
@@ -11,6 +13,7 @@ contextBridge.exposeInMainWorld('studio', Object.freeze({
   saveSettings: invoke('saveSettings'),
   pickPromptsFile: invoke('pickPromptsFile'),
   exportVideo: invoke('exportVideo'),
+  exportZip: invoke('exportZip'),
   makeReel: invoke('makeReel'),
   revealVideo: invoke('revealVideo'),
   dictate: invoke('dictate'),

@@ -76,8 +76,36 @@ async function main() {
     await page.locator('[data-view="queue"]').click();
     await page.locator('#batch-model').selectOption('ltx2-free');
     await page.locator('#batch-input').fill('TEST FIXTURE: offline batch prompt one\nTEST FIXTURE: offline batch prompt two');
+    const batchFolder = fs.mkdtempSync(path.join(evidence, 'batch-exports-'));
+    await application.evaluate(({ dialog }, directory) => {
+      let calls = 0;
+      dialog.showOpenDialog = async (_window, options) => {
+        if (!options.properties.includes('openDirectory')) throw new Error('Expected a folder picker.');
+        return ++calls === 1 ? { canceled: true, filePaths: [] } : { canceled: false, filePaths: [directory] };
+      };
+    }, batchFolder);
+    const chooseFolder = page.getByRole('button', { name: 'Choose save folder', exact: true });
+    const clearFolder = page.getByRole('button', { name: 'Clear folder', exact: true });
+    await chooseFolder.click();
+    await page.waitForFunction(() => !document.getElementById('choose-batch-folder').disabled);
+    assert.equal(await clearFolder.isVisible(), false, 'Cancelling the picker leaves the batch destination optional.');
+    await chooseFolder.click();
+    await clearFolder.waitFor({ state: 'visible' });
+    assert.equal(await page.locator('#batch-save-folder').innerText(), fs.realpathSync(batchFolder));
+    await clearFolder.click();
+    assert.equal(await clearFolder.isVisible(), false, 'Clear folder removes the selected destination.');
+    await chooseFolder.click();
+    await clearFolder.waitFor({ state: 'visible' });
     await page.locator('#add-batch').click();
-    await page.waitForFunction(async () => (await window.studio.snapshot()).stats.completed === 3);
+    await page.waitForFunction(() => [...document.querySelectorAll('.job-auto-export')].filter(note => note.textContent.startsWith('Folder copy saved to ')).length === 2);
+    const batchSnapshot = JSON.parse(fs.readFileSync(path.join(dataDir, 'studio.json'), 'utf8'));
+    assert.equal(batchSnapshot.jobs.filter(job => job.status === 'completed').length, 3);
+    for (const job of batchSnapshot.jobs.filter(job => job.autoExport)) {
+      assert.equal(path.dirname(job.autoExport.filePath), fs.realpathSync(batchFolder));
+      assert.ok(fs.readFileSync(job.autoExport.filePath).equals(fs.readFileSync(job.videoPath)), 'Automatic export copies the finished video byte for byte.');
+    }
+    assert.equal(fs.readdirSync(batchFolder).length, 2, 'The two files belong to this batch only.');
+    assert.equal(await clearFolder.isVisible(), false, 'A saved folder applies to one batch only.');
     assert.equal(await page.locator('dialog').count(), 0, 'Generate batch starts directly.');
     const network = await application.evaluate(() => global.__desktopNetwork);
     assert.equal(network.submissions, 3);
@@ -134,9 +162,9 @@ async function main() {
     assert.deepEqual(pageErrors, []);
     fs.writeFileSync(path.join(evidence, 'desktop-summary.json'), JSON.stringify({ passed: true, activePrompts: 500, completedFixtures: 3,
       mockedGenerationRequests: 3, actualNetworkRequests: 0, noApprovalDialogs: true, unrelatedPendingPreserved: true, pausedRestart: true,
-      storyDefaultSelected: true, twentySecondPlan: [10, 10], unsupportedDurationRejected: true,
+      storyDefaultSelected: true, twentySecondPlan: [10, 10], unsupportedDurationRejected: true, automaticBatchCopies: 2,
       limitations: ['Short-clip completions use labelled test footage; this test does not represent a generated 15–20s video.'] }, null, 2));
-    console.log('Desktop verification passed: direct single/batch generation, no approval dialogs, 500 saved prompts, no external requests.');
+    console.log('Desktop verification passed: direct generation, automatic batch copies, 500 saved prompts, no external requests.');
   } finally { if (application) await application.close().catch(() => {}); }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

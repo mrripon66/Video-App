@@ -1,6 +1,7 @@
 'use strict';
 
 const { randomUUID } = require('node:crypto');
+const path = require('node:path');
 
 const ACTIVE = new Set(['pending', 'submitting', 'queued', 'running', 'needs_attention']);
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
@@ -13,6 +14,7 @@ const detail = error => String(error && error.message || error || 'Unknown error
 
 function validateVideoPlan(plan) {
   if (!plan || !Number.isFinite(plan.durationSeconds) || plan.durationSeconds < 15 || plan.durationSeconds > 20 ||
+    (plan.orientation !== undefined && plan.orientation !== 'portrait') ||
     Math.abs(plan.durationSeconds * 10 - Math.round(plan.durationSeconds * 10)) > 1e-7 ||
     !Array.isArray(plan.segments) || plan.segments.length !== 2 ||
     plan.segments.some(segment => !segment || typeof segment.prompt !== 'string' || !segment.prompt.trim() || segment.prompt.length > 10000 ||
@@ -22,6 +24,10 @@ function validateVideoPlan(plan) {
     throw new Error('The saved long-video plan is invalid. No generation request was sent.');
   }
   return plan;
+}
+
+function storyContext(plan) {
+  return plan.orientation === 'portrait' ? { purpose: 'story', orientation: 'portrait' } : { purpose: 'story' };
 }
 
 function automaticBatch(settings) {
@@ -94,8 +100,12 @@ class Queue {
     return model;
   }
 
-  addPrompts(prompts, modelId) {
+  addPrompts(prompts, modelId, { autoExportDirectory } = {}) {
     this._model(modelId);
+    if (autoExportDirectory !== undefined && (typeof autoExportDirectory !== 'string' ||
+      !path.isAbsolute(autoExportDirectory) || autoExportDirectory.includes('\0'))) {
+      throw new Error('Choose an automatic export folder first.');
+    }
     if (!Array.isArray(prompts) || !prompts.length) throw new Error('Add at least one prompt.');
     const clean = prompts.map(prompt => {
       if (typeof prompt !== 'string' || !prompt.trim()) throw new Error('Every queue item needs a prompt.');
@@ -111,6 +121,7 @@ class Queue {
         if (videoPlan.production && typeof this.prepareVideo !== 'function') throw new Error('Local sound preparation is unavailable. No prompts were added.');
       }
       return { id: randomUUID(), prompt, modelId, status: 'pending', createdAt: now(), updatedAt: now(), attempts: [],
+        ...(autoExportDirectory ? { autoExport: { directory: autoExportDirectory, status: 'pending' } } : {}),
         ...(videoPlan ? { videoPlan, segments: videoPlan.segments.map(segment => ({ ...segment, status: 'pending' })), segmentIndex: 0 } : {}) };
     });
     this.store.mutate(state => {
@@ -184,10 +195,11 @@ class Queue {
     const checkedProviders = new Set();
     for (const job of selected) {
       const modelId = job.videoPlan ? 'ltx2-free' : job.modelId;
-      const key = `${modelId}:${job.videoPlan ? 'story' : 'clip'}`;
+      const context = job.videoPlan ? storyContext(job.videoPlan) : undefined;
+      const key = `${modelId}:${context?.purpose || 'clip'}:${context?.orientation || ''}`;
       if (checkedProviders.has(key)) continue;
       checkedProviders.add(key);
-      if (job.videoPlan) this.providerFactory(this._model(modelId), { purpose: 'story' });
+      if (context) this.providerFactory(this._model(modelId), context);
       else this.providerFactory(this._model(modelId));
     }
     if (automatic) this.store.mutate(state => { state.settings.automaticBatch = { jobIds: approvedJobIds, retryAt: null }; });
@@ -415,7 +427,7 @@ class Queue {
       allowSubmission = true;
     }
     let provider;
-    try { provider = this.providerFactory(this._model('ltx2-free'), { purpose: 'story' }); }
+    try { provider = this.providerFactory(this._model('ltx2-free'), storyContext(initial.videoPlan)); }
     catch (error) {
       this._update(initial.id, job => { job.status = 'needs_attention'; job.error = detail(error); });
       return;
@@ -584,7 +596,9 @@ class Queue {
     this._update(id, item => { item.status = 'running'; item.phase = 'composing'; delete item.remote; delete item.remoteVideoUrl; });
     try {
       if (typeof this.composeVideo !== 'function') throw new Error('Long-video assembly is unavailable.');
-      const videoPath = await this.composeVideo({ jobId: id, segments: job.segments.map(segment => ({ videoPath: segment.videoPath, durationSeconds: segment.durationSeconds })), durationSeconds: job.videoPlan.durationSeconds });
+      const { durationSeconds, orientation } = job.videoPlan;
+      const segments = job.segments.map(segment => ({ videoPath: segment.videoPath, durationSeconds: segment.durationSeconds }));
+      const videoPath = await this.composeVideo({ jobId: id, segments, durationSeconds, ...(orientation ? { orientation } : {}) });
       if (typeof videoPath !== 'string' || !videoPath) throw new Error('The joined video was not saved.');
       const current = this._job(id);
       if ((current.executionVersion || 0) !== version || TERMINAL.has(current.status)) return;
@@ -721,7 +735,7 @@ class Queue {
       this._update(id, item => { item.cancelRequested = true; item.cancellation = 'requested'; });
       if (job.remote) {
         try { await this._cancelRemote(id, job.videoPlan
-          ? this.providerFactory(this._model('ltx2-free'), { purpose: 'story' })
+          ? this.providerFactory(this._model('ltx2-free'), storyContext(job.videoPlan))
           : this.providerFactory(this._model(job.modelId))); }
         catch (error) { this._update(id, item => { item.cancellationError = `Cancellation could not be confirmed. The provider may continue using your quota. ${detail(error)}`; }); }
       }

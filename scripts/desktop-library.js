@@ -24,6 +24,10 @@ async function main() {
   const reelId = 'library-fixture-with-sound';
   const reelPath = path.join(videoDir, reelId + '.mp4');
   const reelPrompt = 'TEST FIXTURE — vertical MP4 playback with audio';
+  const excludedId = 'library-fixture-not-selected';
+  const excludedPath = path.join(videoDir, excludedId + '.webm');
+  const archivePath = path.join(fs.mkdtempSync(path.join(evidence, 'library-exports-')), 'selected-videos.zip');
+  fs.copyFileSync(videoPath, excludedPath);
   const userReel = process.env.STUDIO_TEST_REEL;
   if (userReel) fs.copyFileSync(userReel, reelPath, fs.constants.COPYFILE_EXCL);
   else execFileSync(require('ffmpeg-static'), ['-hide_banner', '-v', 'error', '-nostdin', '-f', 'lavfi',
@@ -38,6 +42,8 @@ async function main() {
       status: 'completed', videoPath, createdAt: new Date().toISOString(), completedAt: new Date().toISOString(), attempts: [] });
     state.jobs.push({ id: reelId, modelId: 'ltx-free', prompt: reelPrompt, status: 'completed', videoPath: reelPath,
       createdAt: new Date().toISOString(), completedAt: new Date().toISOString(), attempts: [] });
+    state.jobs.push({ id: excludedId, modelId: 'ltx-free', prompt: 'TEST FIXTURE — leave this video out of the ZIP', status: 'completed', videoPath: excludedPath,
+      createdAt: new Date().toISOString(), completedAt: new Date().toISOString(), attempts: [] });
   });
   const environment = { ...process.env, STUDIO_DATA_DIR: dataDir };
   delete environment.ELECTRON_RUN_AS_NODE;
@@ -46,13 +52,19 @@ async function main() {
   try {
     application = await electron.launch({ executablePath, args: [root], env: environment, timeout: 30000 });
     application.process().stderr.on('data', chunk => fs.appendFileSync(path.join(evidence, 'library-electron.log'), chunk));
-    await application.evaluate(() => {
+    await application.evaluate(({ dialog }, filename) => {
       global.__libraryProviderCalls = 0;
       global.fetch = async () => { global.__libraryProviderCalls++; throw new Error('Provider network disabled for the library regression.'); };
-    });
+      global.__librarySaveDialogs = [];
+      dialog.showSaveDialog = async (...args) => {
+        const { defaultPath, filters } = args.at(-1);
+        global.__librarySaveDialogs.push({ defaultPath, filters });
+        return global.__librarySaveDialogs.length === 1 ? { canceled: true } : { canceled: false, filePath: filename };
+      };
+    }, archivePath);
     const page = await application.firstWindow();
     page.on('pageerror', error => pageErrors.push(error.message));
-    await page.waitForFunction(async () => window.studio && (await window.studio.snapshot()).jobs.length === 2);
+    await page.waitForFunction(async () => window.studio && (await window.studio.snapshot()).jobs.length === 3);
     assert.equal(await page.evaluate(async () => (await window.studio.snapshot()).paused), true);
     await page.locator('[data-view="library"]').click();
     const video = page.locator('#library-grid video[src="' + mediaUrl + '"]');
@@ -115,6 +127,47 @@ async function main() {
     await player.getByRole('button', { name: 'Close', exact: true }).click();
     await player.waitFor({ state: 'detached' });
 
+    await page.getByRole('button', { name: 'Select videos', exact: true }).click();
+    const library = page.locator('#library-grid');
+    const selectedCount = page.locator('#library-selection-count');
+    await page.getByRole('button', { name: 'Select all', exact: true }).click();
+    assert.equal(await selectedCount.innerText(), '3 videos selected');
+    await page.getByRole('button', { name: 'Clear', exact: true }).click();
+    assert.equal(await selectedCount.innerText(), '0 videos selected');
+    await library.getByRole('checkbox', { name: /official Chromium bear\.webm/ }).check();
+    await library.getByRole('checkbox', { name: /vertical MP4 playback with audio/ }).check();
+    const excluded = library.getByRole('checkbox', { name: /leave this video out/ });
+    assert.equal(await excluded.isChecked(), false);
+    assert.equal(await selectedCount.innerText(), '2 videos selected');
+    const saveZip = page.locator('#library-save-zip');
+    await saveZip.click();
+    await page.waitForFunction(() => document.querySelector('#library-save-zip')?.disabled === false);
+    assert.equal((await application.evaluate(() => global.__librarySaveDialogs)).length, 1);
+    assert.equal(fs.existsSync(archivePath), false, 'Cancelling the picker creates no archive.');
+    assert.equal(await selectedCount.innerText(), '2 videos selected', 'Cancelling keeps both selections.');
+    await saveZip.click();
+    await page.getByText('ZIP saved with 2 videos.', { exact: true }).waitFor({ state: 'visible', timeout: 30000 });
+    const dialogs = await application.evaluate(() => global.__librarySaveDialogs);
+    assert.equal(dialogs.length, 2);
+    assert.ok(dialogs.every(entry => entry.defaultPath.endsWith('.zip') && entry.filters.some(filter => filter.extensions.includes('zip'))));
+
+    // Windows tar reads the ZIP independently of the library used to write it.
+    const tarOptions = { windowsHide: true, timeout: 30000 };
+    const names = execFileSync('tar.exe', ['-tf', archivePath], { ...tarOptions, encoding: 'utf8' }).trim().split(/\r?\n/);
+    assert.equal(names.length, 2, 'Only the two selected videos belong in the ZIP.');
+    assert.ok(names.every(name => !/[\\/]/.test(name)), 'The videos are at the root of the ZIP.');
+    const expectedBytes = new Map([['.webm', fixture], ['.mp4', fs.readFileSync(reelPath)]]);
+    for (const name of names) {
+      const extension = path.extname(name);
+      const expected = expectedBytes.get(extension);
+      assert.ok(expected, 'The ZIP has one WebM and one MP4.');
+      const bytes = execFileSync('tar.exe', ['-xOf', archivePath, '--', name], { ...tarOptions, maxBuffer: expected.length + 65536 });
+      assert.deepEqual(bytes, expected, `The ZIP preserves all source bytes for ${name}.`);
+      expectedBytes.delete(extension);
+    }
+    assert.equal(expectedBytes.size, 0);
+    await page.getByRole('button', { name: 'Done selecting', exact: true }).click();
+
     // net.fetch exercises the registered protocol directly; renderer connect-src
     // intentionally prohibits arbitrary fetch. Only local custom-scheme requests
     // are used here. The provider's global fetch remains blocked above.
@@ -147,10 +200,11 @@ async function main() {
       fixture: FIXTURE, fixtureIsAiGenerated: false, metadata, playbackAdvancedTo: advanced, seekTarget, seeked, reelMetadata,
       providerRequests: 0, checked: ['real WebM metadata', 'real video playback advances', 'seeking', 'exact byte ranges',
         'Watch opens portrait H.264 MP4', 'AAC decodes unmuted', 'mute and unmute', 'Replay after reaching the end',
+        'ZIP selection, save and cancellation', 'exact archive entries and video bytes',
         'suffix byte range', 'unsatisfiable and malformed ranges', 'unknown ID rejection', 'path traversal rejection',
         'unknown protocol host rejection', 'zero paid/provider network requests', 'isolated test data'],
-      limitations: ['No paid generation', 'Native export and reveal dialogs are not exercised by this test'] }, null, 2));
-    console.log('Library verification passed: WebM plays and seeks, Watch opens a vertical MP4 with sound, Replay restarts it, and local byte ranges are exact. Zero provider requests.');
+      limitations: ['No paid generation', 'The native ZIP file picker is stubbed'] }, null, 2));
+    console.log('Library verification passed: video plays with sound, selected ZIP entries match the originals, and local byte ranges are exact. Zero provider requests.');
   } finally {
     if (application) await application.close().catch(() => {});
   }
