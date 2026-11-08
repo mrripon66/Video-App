@@ -774,12 +774,25 @@ class Queue {
     if (job.remoteVideoUrl) throw new Error('This video is already generated. Retry its download instead.');
     if (job.remote && job.status === 'needs_attention') throw new Error('This request can be resumed without another submission. Use Resume monitoring.');
     if (this.store.snapshot().jobs.filter(item => ACTIVE.has(item.status)).length >= ACTIVE_LIMIT && !ACTIVE.has(job.status)) throw new Error('The active queue is full.');
+    // Re-read local production instructions after a preparation failure only
+    // if the earlier plan never reached the provider.
+    const canReplan = job.phase === 'prepare_failed' && job.videoPlan && !job.startedAt && !job.remote && !job.videoPath &&
+      !job.attempts?.some(attempt => attempt.remote) && job.segments.every(segment => segment.status === 'pending' &&
+        !segment.remote && !segment.remoteVideoUrl && !segment.videoPath &&
+        !segment.attempts?.some(attempt => attempt.remote || attempt.status !== 'pending'));
+    const revisedPlan = canReplan ? validateVideoPlan(this.planVideo(job.modelId, job.prompt)) : null;
+    if (revisedPlan?.production && typeof this.prepareVideo !== 'function') throw new Error('Local sound preparation is unavailable.');
     this._approved.delete(id);
     this._update(id, item => {
       item.attempts = [...(item.attempts || []), { status: item.status, remote: item.remote || null, error: item.error || null, endedAt: now(), cancellation: item.cancellation || null }];
       item.status = 'pending';
       item.executionVersion = (item.executionVersion || 0) + 1;
-      if (item.videoPlan) {
+      if (revisedPlan) {
+        item.videoPlan = revisedPlan;
+        item.segments = revisedPlan.segments.map(segment => ({ ...segment, status: 'pending' }));
+        item.segmentIndex = 0;
+        delete item.prepared;
+      } else if (item.videoPlan) {
         const index = this._storyIndex(item);
         if (index !== -1) {
           const segment = item.segments[index];

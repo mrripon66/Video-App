@@ -1,6 +1,6 @@
 {
   "name": "ai-video-studio",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "description": "Generate videos directly with verified free shared GPU models.",
   "author": "mrripon66",
   "license": "MIT",
